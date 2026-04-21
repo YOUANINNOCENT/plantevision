@@ -19,7 +19,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.11.4
+  sdk: ">=3.10.8 <4.0.0"
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -39,6 +39,7 @@ dependencies:
   image_picker: ^1.2.1
   http: ^1.0.0
   logging: ^1.0.2
+  shared_preferences: ^2.1.0
 
 dev_dependencies:
   flutter_test:
@@ -93,9 +94,10 @@ flutter:
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
 
-# Temporary overrides to resolve transitive outdated packages
 dependency_overrides:
-  meta: ^1.18.2
-  vector_math: ^2.3.0
-  # test_api is a dev transitive dependency; override if needed for tests
-  test_api: ^0.7.11
+  characters: 1.4.1
+  material_color_utilities: 0.13.0
+  meta: 1.18.2
+  vector_math: 2.3.0
+  matcher: 0.12.19
+  test_api: 0.7.11
