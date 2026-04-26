@@ -4,6 +4,7 @@ import 'ecran_accueil.dart';
 import 'ecran_resultat_analyse.dart';
 import 'ecran_historique.dart';
 import 'services/api_service.dart';
+import 'services/i18n.dart';
 
 class EcranTableau extends StatefulWidget {
   const EcranTableau({super.key});
@@ -17,16 +18,20 @@ class _EcranTableauState extends State<EcranTableau> {
   Map<String, dynamic> _stats = {};
   Map<String, dynamic> _donut = {};
   List<Map<String, dynamic>> _alerts = [];
+  List<Map<String, dynamic>> _locations = [];
 
   @override
   void initState() {
     super.initState();
     _loadDashboard();
+    _loadLocations();
   }
 
   Future<void> _loadDashboard() async {
     try {
-      final j = await ApiService.instance.getJson('/dashboard');
+      final uid = ApiService.instance.currentUserId;
+      final path = uid != null ? '/dashboard?user_id=$uid' : '/dashboard';
+      final j = await ApiService.instance.getJson(path);
       setState(() {
         _stats = Map<String, dynamic>.from(j['stats'] ?? {});
         _donut = Map<String, dynamic>.from(j['donut'] ?? {});
@@ -36,7 +41,6 @@ class _EcranTableauState extends State<EcranTableau> {
         _loading = false;
       });
     } catch (_) {
-      // fallback to defaults if endpoint missing
       setState(() {
         _stats = {
           'total_scans': '—',
@@ -51,6 +55,28 @@ class _EcranTableauState extends State<EcranTableau> {
         };
         _alerts = [];
         _loading = false;
+      });
+    }
+  }
+
+  Future<void> _loadLocations() async {
+    try {
+      final uid = ApiService.instance.currentUserId;
+      final path = uid != null
+          ? '/analyses/locations?user_id=$uid'
+          : '/analyses/locations';
+      final j = await ApiService.instance.getJson(path);
+      final items = (j['items'] as List? ?? [])
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _locations = items;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _locations = [];
       });
     }
   }
@@ -73,40 +99,6 @@ class _EcranTableauState extends State<EcranTableau> {
 
     return Scaffold(
       backgroundColor: background,
-      appBar: AppBar(
-        backgroundColor: background,
-        elevation: 0,
-        centerTitle: true,
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.menu, color: primary),
-            const SizedBox(width: 12),
-            Text(
-              'Vision',
-              style: GoogleFonts.manrope(
-                fontWeight: FontWeight.w800,
-                color: primary,
-                fontSize: 18,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12.0),
-            child: Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: surfaceLowest,
-                shape: BoxShape.circle,
-                border: Border.all(color: primary.withAlpha(25)),
-              ),
-            ),
-          ),
-        ],
-      ),
       body: SafeArea(
         child: _loading
             ? const Center(child: CircularProgressIndicator())
@@ -120,7 +112,7 @@ class _EcranTableauState extends State<EcranTableau> {
                   children: [
                     const SizedBox(height: 8),
                     Text(
-                      'TABLEAU DE BORD',
+                      I18n.tr('dashboard.section'),
                       style: GoogleFonts.inter(
                         fontSize: 11,
                         letterSpacing: 1.5,
@@ -130,7 +122,7 @@ class _EcranTableauState extends State<EcranTableau> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Analyse des Données',
+                      I18n.tr('dashboard.title'),
                       style: GoogleFonts.manrope(
                         fontSize: 26,
                         fontWeight: FontWeight.w800,
@@ -147,7 +139,7 @@ class _EcranTableauState extends State<EcranTableau> {
                       mainAxisSpacing: 12,
                       children: [
                         _StatCard(
-                          title: 'Total Scans',
+                          title: I18n.tr('dashboard.totalScans'),
                           value: totalScans,
                           icon: Icons.eco,
                           bg: surfaceLow,
@@ -155,7 +147,7 @@ class _EcranTableauState extends State<EcranTableau> {
                           iconColor: primary,
                         ),
                         _StatCard(
-                          title: '% Toxiques',
+                          title: I18n.tr('dashboard.percentToxic'),
                           value: percentToxic,
                           icon: Icons.warning,
                           bg: surfaceLow,
@@ -163,7 +155,7 @@ class _EcranTableauState extends State<EcranTableau> {
                           iconColor: error,
                         ),
                         _StatCard(
-                          title: 'Espèces',
+                          title: I18n.tr('dashboard.species'),
                           value: speciesCount,
                           icon: Icons.biotech,
                           bg: surfaceLow,
@@ -191,7 +183,7 @@ class _EcranTableauState extends State<EcranTableau> {
                               Align(
                                 alignment: Alignment.centerLeft,
                                 child: Text(
-                                  'Répartition Florale',
+                                  I18n.tr('dashboard.distribution'),
                                   style: GoogleFonts.manrope(
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -225,7 +217,7 @@ class _EcranTableauState extends State<EcranTableau> {
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
                                           Text(
-                                            'Dominant',
+                                            I18n.tr('dashboard.dominant'),
                                             style: GoogleFonts.inter(
                                               fontSize: 10,
                                               color: onSurfaceVariant,
@@ -251,19 +243,19 @@ class _EcranTableauState extends State<EcranTableau> {
                                 children: [
                                   _LegendDot(
                                     color: const Color(0xFF0d631b),
-                                    label: 'Comestibles',
+                                    label: I18n.tr('dashboard.edible'),
                                     value:
                                         _donut['comestible']?.toString() ?? '—',
                                   ),
                                   _LegendDot(
                                     color: const Color(0xFFdae6d1),
-                                    label: 'Médicinales',
+                                    label: I18n.tr('dashboard.medicinal'),
                                     value:
                                         _donut['medicinal']?.toString() ?? '—',
                                   ),
                                   _LegendDot(
                                     color: const Color(0xFFba1a1a),
-                                    label: 'Toxiques',
+                                    label: I18n.tr('dashboard.toxic'),
                                     value: _donut['toxic']?.toString() ?? '—',
                                   ),
                                 ],
@@ -281,30 +273,40 @@ class _EcranTableauState extends State<EcranTableau> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                'Localisation des Scans',
-                                style: GoogleFonts.manrope(
-                                  fontWeight: FontWeight.w700,
-                                ),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    I18n.tr('dashboard.locations'),
+                                    style: GoogleFonts.manrope(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.refresh, size: 18),
+                                    onPressed: _loadLocations,
+                                    tooltip: 'Rafraîchir',
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: 8),
+                              const SizedBox(height: 4),
                               Text(
-                                'Concentration géographique des dernières analyses',
+                                _locations.isEmpty
+                                    ? 'Aucun scan géolocalisé pour le moment'
+                                    : '${_locations.length} scan${_locations.length > 1 ? "s" : ""} géolocalisé${_locations.length > 1 ? "s" : ""}',
                                 style: GoogleFonts.inter(
                                   color: onSurfaceVariant,
                                   fontSize: 12,
                                 ),
                               ),
                               const SizedBox(height: 12),
-                              Container(
-                                height: 200,
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(10),
-                                  color: surfaceLow,
-                                ),
-                                child: const Center(
-                                  child: Text('Carte / Image'),
-                                ),
+                              _LocationList(
+                                locations: _locations,
+                                primary: const Color(0xFF0d631b),
+                                surfaceLow: surfaceLow,
+                                onSurfaceVariant: onSurfaceVariant,
                               ),
                             ],
                           ),
@@ -334,7 +336,7 @@ class _EcranTableauState extends State<EcranTableau> {
                     const SizedBox(height: 18),
 
                     Text(
-                      'Alertes Actives',
+                      I18n.tr('dashboard.alerts'),
                       style: GoogleFonts.manrope(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
@@ -379,16 +381,16 @@ class _EcranTableauState extends State<EcranTableau> {
                 context,
                 MaterialPageRoute(builder: (_) => const EcranAccueil()),
               ),
-              child: const _SmallNav(icon: Icons.home, label: 'Accueil'),
+              child: _SmallNav(icon: Icons.home, label: I18n.tr('nav.home')),
             ),
             GestureDetector(
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const EcranResultatAnalyse()),
               ),
-              child: const _SmallNav(
+              child: _SmallNav(
                 icon: Icons.center_focus_strong,
-                label: 'Analyser',
+                label: I18n.tr('nav.analyse'),
               ),
             ),
             GestureDetector(
@@ -396,11 +398,14 @@ class _EcranTableauState extends State<EcranTableau> {
                 context,
                 MaterialPageRoute(builder: (_) => const EcranHistorique()),
               ),
-              child: const _SmallNav(icon: Icons.history, label: 'Historique'),
+              child: _SmallNav(
+                icon: Icons.history,
+                label: I18n.tr('nav.history'),
+              ),
             ),
-            const _SmallNav(
+            _SmallNav(
               icon: Icons.dashboard,
-              label: 'Tableau',
+              label: I18n.tr('nav.dashboard'),
               active: true,
             ),
           ],
@@ -464,6 +469,141 @@ class _StatCard extends StatelessWidget {
             child: Icon(icon, color: iconColor),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _LocationList extends StatelessWidget {
+  final List<Map<String, dynamic>> locations;
+  final Color primary;
+  final Color surfaceLow;
+  final Color onSurfaceVariant;
+  const _LocationList({
+    required this.locations,
+    required this.primary,
+    required this.surfaceLow,
+    required this.onSurfaceVariant,
+  });
+
+  String _formatCoord(dynamic lat, dynamic lon) {
+    try {
+      final la = (lat as num).toDouble();
+      final lo = (lon as num).toDouble();
+      return '${la.toStringAsFixed(5)}, ${lo.toStringAsFixed(5)}';
+    } catch (_) {
+      return '—';
+    }
+  }
+
+  String _formatDate(String? iso) {
+    if (iso == null || iso.isEmpty) return '';
+    try {
+      final d = DateTime.parse(iso).toLocal();
+      return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (locations.isEmpty) {
+      return Container(
+        height: 160,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          color: surfaceLow,
+        ),
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.location_off, color: onSurfaceVariant),
+              const SizedBox(height: 8),
+              Text(
+                'Aucune localisation\nScanne une plante avec le GPS activé',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  color: onSurfaceVariant,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    // Montre max 8 éléments
+    final display = locations.take(8).toList();
+    return Container(
+      decoration: BoxDecoration(
+        color: surfaceLow,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        children: display.map((loc) {
+          final plantName = loc['plant_id']?.toString() ?? '—';
+          final label = loc['location_label']?.toString();
+          final coords = _formatCoord(loc['latitude'], loc['longitude']);
+          final date = _formatDate(loc['created_at']?.toString());
+          return InkWell(
+            onTap: () {
+              // Ouvre dans un map externe (Google Maps) si possible
+              // (optionnel, nécessiterait url_launcher)
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: primary.withAlpha(40),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.place, color: primary, size: 20),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          plantName,
+                          style: GoogleFonts.manrope(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          label != null && label.isNotEmpty ? label : coords,
+                          style: GoogleFonts.inter(
+                            color: onSurfaceVariant,
+                            fontSize: 11,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    date,
+                    style: GoogleFonts.inter(
+                      color: onSurfaceVariant,
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }).toList(),
       ),
     );
   }

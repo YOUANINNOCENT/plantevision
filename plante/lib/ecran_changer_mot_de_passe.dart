@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'services/api_service.dart';
+import 'services/i18n.dart';
 
 class EcranChangerMotDePasse extends StatefulWidget {
   const EcranChangerMotDePasse({super.key});
@@ -14,6 +16,64 @@ class _EcranChangerMotDePasseState extends State<EcranChangerMotDePasse> {
   final TextEditingController _confirm = TextEditingController();
   bool _showCurrent = false;
   bool _showNouveau = false;
+  bool _loading = false;
+
+  Future<void> _submit() async {
+    final current = _current.text;
+    final nouveau = _nouveau.text;
+    final confirm = _confirm.text;
+    if (current.isEmpty) {
+      _snack('Saisis ton mot de passe actuel', error: true);
+      return;
+    }
+    if (nouveau.length < 6) {
+      _snack('Le nouveau mot de passe doit contenir au moins 6 caractères',
+          error: true);
+      return;
+    }
+    if (nouveau != confirm) {
+      _snack('Les deux mots de passe ne correspondent pas', error: true);
+      return;
+    }
+    if (nouveau == current) {
+      _snack('Le nouveau mot de passe doit être différent de l\'actuel',
+          error: true);
+      return;
+    }
+    setState(() => _loading = true);
+    try {
+      await ApiService.instance.changePassword(
+        currentPassword: current,
+        newPassword: nouveau,
+      );
+      if (!mounted) return;
+      _snack('Mot de passe mis à jour avec succès');
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.statusCode == 401) {
+        _snack('Mot de passe actuel incorrect', error: true);
+      } else if (e.statusCode == 400) {
+        _snack(e.message, error: true);
+      } else {
+        _snack('Erreur ${e.statusCode} — ${e.message}', error: true);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _snack('Erreur de connexion — $e', error: true);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _snack(String msg, {bool error = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: error ? Colors.redAccent : const Color(0xFF0d631b),
+    ));
+  }
 
   int _passwordStrength(String s) {
     var score = 0;
@@ -100,7 +160,7 @@ class _EcranChangerMotDePasseState extends State<EcranChangerMotDePasse> {
           icon: const Icon(Icons.arrow_back, color: Color(0xFF0d631b)),
         ),
         title: Text(
-          'Changer le mot de passe',
+          I18n.tr('password.title'),
           style: GoogleFonts.manrope(
             color: primary,
             fontWeight: FontWeight.w700,
@@ -115,7 +175,7 @@ class _EcranChangerMotDePasseState extends State<EcranChangerMotDePasse> {
             children: [
               const SizedBox(height: 8),
               Text(
-                'Sécurisez votre compte',
+                I18n.tr('password.heading'),
                 style: GoogleFonts.manrope(
                   fontSize: 32,
                   fontWeight: FontWeight.w800,
@@ -131,7 +191,7 @@ class _EcranChangerMotDePasseState extends State<EcranChangerMotDePasse> {
 
               // Mot de passe actuel
               Text(
-                'MOT DE PASSE ACTUEL',
+                I18n.tr('password.current'),
                 style: GoogleFonts.inter(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
@@ -180,7 +240,7 @@ class _EcranChangerMotDePasseState extends State<EcranChangerMotDePasse> {
               const SizedBox(height: 18),
               // Nouveau mot de passe
               Text(
-                'NOUVEAU MOT DE PASSE',
+                I18n.tr('password.new'),
                 style: GoogleFonts.inter(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
@@ -208,7 +268,7 @@ class _EcranChangerMotDePasseState extends State<EcranChangerMotDePasse> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          'Force du mot de passe',
+                          I18n.tr('password.strength'),
                           style: GoogleFonts.inter(fontSize: 12),
                         ),
                         Text(
@@ -243,7 +303,7 @@ class _EcranChangerMotDePasseState extends State<EcranChangerMotDePasse> {
               const SizedBox(height: 18),
               // Confirm
               Text(
-                'CONFIRMER LE NOUVEAU MOT DE PASSE',
+                I18n.tr('password.confirm'),
                 style: GoogleFonts.inter(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
@@ -313,10 +373,19 @@ class _EcranChangerMotDePasseState extends State<EcranChangerMotDePasse> {
         child: SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed: () {},
-            icon: const Icon(Icons.sync_lock),
+            onPressed: _loading ? null : _submit,
+            icon: _loading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
+                : const Icon(Icons.sync_lock),
             label: Text(
-              'Mettre à jour le mot de passe',
+              _loading ? I18n.tr('password.updating') : I18n.tr('password.submit'),
               style: GoogleFonts.manrope(fontWeight: FontWeight.w700),
             ),
             style: ElevatedButton.styleFrom(

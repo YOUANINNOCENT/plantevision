@@ -5,6 +5,7 @@ import 'ecran_accueil.dart';
 import 'ecran_profil.dart';
 import 'ecran_tableau.dart';
 import 'ecran_liste_plantes.dart';
+import 'ecran_connexion.dart';
 
 class EcranMenu extends StatefulWidget {
   const EcranMenu({super.key});
@@ -24,6 +25,40 @@ class _EcranMenuState extends State<EcranMenu> {
     _loadData();
   }
 
+  /// Déconnecte l'utilisateur (efface user/token côté ApiService) et
+  /// renvoie vers l'écran de connexion en vidant la pile de navigation
+  /// pour empêcher tout retour arrière vers les écrans authentifiés.
+  Future<void> _logout(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Déconnexion'),
+        content: const Text('Voulez-vous vraiment vous déconnecter ?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(false),
+            child: const Text('Annuler'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(c).pop(true),
+            child: const Text(
+              'Se déconnecter',
+              style: TextStyle(color: Color(0xFFba1a1a)),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    ApiService.instance.logout();
+    if (!mounted) return;
+    if (!context.mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const EcranConnexion()),
+      (route) => false,
+    );
+  }
+
   Future<void> _loadData() async {
     try {
       final pj = await ApiService.instance.getJson('/plants');
@@ -40,8 +75,11 @@ class _EcranMenuState extends State<EcranMenu> {
 
       Map<String, dynamic>? user;
       try {
-        final uj = await ApiService.instance.getJson('/users/1');
-        user = Map<String, dynamic>.from(uj);
+        final uid = ApiService.instance.currentUserId;
+        if (uid != null) {
+          final uj = await ApiService.instance.getJson('/users/$uid');
+          user = Map<String, dynamic>.from(uj);
+        }
       } catch (_) {
         user = null;
       }
@@ -247,28 +285,6 @@ class _EcranMenuState extends State<EcranMenu> {
 
                           const Spacer(),
                           const Divider(color: Color(0xFFbfcaba), height: 1),
-                          const SizedBox(height: 12),
-
-                          _NavItem(
-                            icon: Icons.settings,
-                            label: 'PARAMÈTRES',
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const EcranProfil(),
-                              ),
-                            ),
-                          ),
-                          _NavItem(
-                            icon: Icons.help,
-                            label: 'AIDE',
-                            onTap: () =>
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Aide (à implémenter)'),
-                                  ),
-                                ),
-                          ),
-
                           const SizedBox(height: 18),
                           SizedBox(
                             width: double.infinity,
@@ -283,7 +299,7 @@ class _EcranMenuState extends State<EcranMenu> {
                                 ),
                                 elevation: 0,
                               ),
-                              onPressed: () => Navigator.of(context).pop(),
+                              onPressed: () => _logout(context),
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [

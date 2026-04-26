@@ -4,6 +4,7 @@ import 'ecran_accueil.dart';
 import 'ecran_tableau.dart';
 import 'ecran_resultat_analyse.dart';
 import 'services/api_service.dart';
+import 'services/i18n.dart';
 
 class EcranHistorique extends StatefulWidget {
   const EcranHistorique({super.key});
@@ -15,11 +16,36 @@ class EcranHistorique extends StatefulWidget {
 class _EcranHistoriqueState extends State<EcranHistorique> {
   bool _loading = true;
   List<dynamic> _analyses = [];
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _query = '';
 
   @override
   void initState() {
     super.initState();
     _fetchAnalyses();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  /// Renvoie les analyses qui matchent la recherche (insensible à la casse,
+  /// match sur nom de plante, catégorie, label de localisation, ID).
+  List<dynamic> get _filteredAnalyses {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return _analyses;
+    return _analyses.where((a) {
+      final fields = <String>[
+        (a['plant_name']?.toString() ?? ''),
+        (a['plant_id']?.toString() ?? ''),
+        (a['category']?.toString() ?? ''),
+        (a['location_label']?.toString() ?? ''),
+        (a['id']?.toString() ?? ''),
+      ];
+      return fields.any((f) => f.toLowerCase().contains(q));
+    }).toList();
   }
 
   Future<void> _fetchAnalyses() async {
@@ -28,7 +54,16 @@ class _EcranHistoriqueState extends State<EcranHistorique> {
       if (ApiService.instance.baseUrl == 'https://api.example.com') {
         ApiService.instance.baseUrl = 'http://127.0.0.1:8000';
       }
-      final resp = await ApiService.instance.getJson('/analyses/1');
+      // Utilise l'id de l'utilisateur connecté. Sans user, liste vide.
+      final uid = ApiService.instance.currentUserId;
+      if (uid == null) {
+        setState(() {
+          _analyses = [];
+          _loading = false;
+        });
+        return;
+      }
+      final resp = await ApiService.instance.getJson('/analyses/$uid');
       setState(() {
         _analyses = resp['results'] ?? [];
         _loading = false;
@@ -52,28 +87,6 @@ class _EcranHistoriqueState extends State<EcranHistorique> {
 
     return Scaffold(
       backgroundColor: background,
-      appBar: AppBar(
-        backgroundColor: background,
-        elevation: 0,
-        centerTitle: false,
-        titleSpacing: 12,
-        title: Row(
-          children: [
-            const Icon(Icons.menu, color: Color(0xFF0d631b)),
-            const SizedBox(width: 12),
-            const Spacer(),
-            CircleAvatar(
-              radius: 18,
-              backgroundImage: _analyses.isNotEmpty
-                  ? NetworkImage(
-                      '${ApiService.instance.baseUrl}/analyses/${_analyses[0]['id']}/image',
-                    )
-                  : null,
-              child: _analyses.isEmpty ? const Icon(Icons.person) : null,
-            ),
-          ],
-        ),
-      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
@@ -81,7 +94,7 @@ class _EcranHistoriqueState extends State<EcranHistorique> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'Historique',
+                I18n.tr('history.title'),
                 style: GoogleFonts.manrope(
                   fontSize: 32,
                   fontWeight: FontWeight.w800,
@@ -104,6 +117,9 @@ class _EcranHistoriqueState extends State<EcranHistorique> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: TextField(
+                        controller: _searchCtrl,
+                        textInputAction: TextInputAction.search,
+                        onChanged: (v) => setState(() => _query = v),
                         decoration: InputDecoration(
                           border: InputBorder.none,
                           hintText: 'Rechercher une analyse...',
@@ -111,6 +127,16 @@ class _EcranHistoriqueState extends State<EcranHistorique> {
                         ),
                       ),
                     ),
+                    if (_query.isNotEmpty)
+                      IconButton(
+                        icon: Icon(Icons.close, color: outline),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          setState(() => _query = '');
+                        },
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
                   ],
                 ),
               ),
@@ -133,8 +159,17 @@ class _EcranHistoriqueState extends State<EcranHistorique> {
                           style: GoogleFonts.inter(color: outline),
                         ),
                       )
+                    : _filteredAnalyses.isEmpty
+                    ? Container(
+                        height: 120,
+                        alignment: Alignment.center,
+                        child: Text(
+                          'Aucun résultat pour « $_query »',
+                          style: GoogleFonts.inter(color: outline),
+                        ),
+                      )
                     : Column(
-                        children: _analyses.map((a) {
+                        children: _filteredAnalyses.map((a) {
                           final id = a['id'];
                           final imageUrl =
                               '${ApiService.instance.baseUrl}/analyses/$id/image';
@@ -198,7 +233,7 @@ class _EcranHistoriqueState extends State<EcranHistorique> {
                   MaterialPageRoute(builder: (_) => const EcranAccueil()),
                 );
               },
-              child: const _SmallNav(icon: Icons.home, label: 'ACCUEIL'),
+              child: _SmallNav(icon: Icons.home, label: I18n.tr('nav.home')),
             ),
             GestureDetector(
               onTap: () {
@@ -211,7 +246,7 @@ class _EcranHistoriqueState extends State<EcranHistorique> {
               },
               child: _SmallNav(
                 icon: Icons.center_focus_strong,
-                label: 'ANALYSER',
+                label: I18n.tr('nav.analyse'),
               ),
             ),
             // active center
@@ -230,7 +265,7 @@ class _EcranHistoriqueState extends State<EcranHistorique> {
                   Icon(Icons.history, color: Colors.white),
                   const SizedBox(height: 2),
                   Text(
-                    'HISTORIQUE',
+                    I18n.tr('nav.history'),
                     style: GoogleFonts.inter(fontSize: 9, color: Colors.white),
                   ),
                 ],
@@ -243,7 +278,10 @@ class _EcranHistoriqueState extends State<EcranHistorique> {
                   MaterialPageRoute(builder: (_) => const EcranTableau()),
                 );
               },
-              child: _SmallNav(icon: Icons.dashboard, label: 'TABLEAU'),
+              child: _SmallNav(
+                icon: Icons.dashboard,
+                label: I18n.tr('nav.dashboard'),
+              ),
             ),
           ],
         ),

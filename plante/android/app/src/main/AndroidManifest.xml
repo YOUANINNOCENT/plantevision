@@ -2,6 +2,10 @@
     <!-- Permission for camera preview -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- Permissions de localisation pour géolocaliser les scans -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:label="plante"
         android:name="${applicationName}"

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
 
@@ -10,17 +11,166 @@ import 'ecran_historique.dart';
 import 'ecran_detail_comestible.dart';
 import 'ecran_detail_medicinale.dart';
 import 'services/api_service.dart';
+import 'services/i18n.dart';
 
 class EcranResultatAnalyse extends StatefulWidget {
   final Map<String, dynamic>? analysis;
+  /// 'high' | 'medium' | 'low' (transmis par le scanner après identification)
+  final String? confidenceLevel;
+  /// Top-3 espèces candidates avec leurs scores (le scanner transmet ce que
+  /// PlantNet a renvoyé pour permettre à l'utilisateur de corriger).
+  final List<Map<String, dynamic>>? candidates;
+  /// True si top1 et top2 sont très proches (identification incertaine).
+  final bool ambiguous;
 
-  const EcranResultatAnalyse({super.key, this.analysis});
+  const EcranResultatAnalyse({
+    super.key,
+    this.analysis,
+    this.confidenceLevel,
+    this.candidates,
+    this.ambiguous = false,
+  });
 
   @override
   State<EcranResultatAnalyse> createState() => _EcranResultatAnalyseState();
 }
 
 class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
+  Map<String, dynamic>? _plantInfo;
+  bool _loadingInfo = false;
+  String? _infoError;
+
+  /// Nom le plus fiable de la plante (pour afficher et interroger l'IA)
+  String _plantName = 'Non identifié';
+
+  @override
+  void initState() {
+    super.initState();
+    _extractPlantName();
+    _fetchPlantInfo();
+  }
+
+  void _extractPlantName() {
+    final a = widget.analysis;
+    if (a == null) return;
+    // 1) champ plant_id renseigné par le backend avec scientificNameWithoutAuthor
+    final pid = a['plant_id']?.toString();
+    if (pid != null && pid.isNotEmpty && pid != 'null') {
+      _plantName = pid;
+      return;
+    }
+    // 2) sinon on fouille la réponse PlantNet brute
+    try {
+      final raw = a['result'];
+      Map<String, dynamic>? parsed;
+      if (raw is String && raw.isNotEmpty) {
+        parsed = jsonDecode(raw) as Map<String, dynamic>;
+      } else if (raw is Map) {
+        parsed = Map<String, dynamic>.from(raw);
+      }
+      if (parsed != null) {
+        final results = parsed['results'] as List?;
+        if (results != null && results.isNotEmpty) {
+          final species = (results.first as Map)['species'] as Map?;
+          final sci = species?['scientificNameWithoutAuthor']?.toString();
+          if (sci != null && sci.isNotEmpty) _plantName = sci;
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _fetchPlantInfo() async {
+    debugPrint('[EcranResultat] _fetchPlantInfo plantName="$_plantName"');
+    if (_plantName == 'Non identifié' || _plantName.isEmpty) {
+      setState(() {
+        _infoError =
+            'La plante n\'a pas été identifiée par PlantNet. '
+            'Réessaye avec une photo plus nette (feuille/fleur centrée).';
+      });
+      return;
+    }
+    setState(() {
+      _loadingInfo = true;
+      _infoError = null;
+    });
+    try {
+      final info = await ApiService.instance.getPlantInfo(_plantName);
+      debugPrint('[EcranResultat] getPlantInfo OK keys=${info.keys.toList()}');
+      if (!mounted) return;
+      setState(() {
+        _plantInfo = info;
+        _loadingInfo = false;
+      });
+      // Pousse la catégorie déduite au backend (met à jour la ligne analyses
+      // avec la catégorie réelle — alimente le donut du dashboard).
+      _pushCategoryToBackend(info);
+    } catch (e) {
+      debugPrint('[EcranResultat] getPlantInfo ERROR $e');
+      if (!mounted) return;
+      setState(() {
+        _loadingInfo = false;
+        _infoError = e.toString();
+      });
+    }
+  }
+
+  /// Déduit une catégorie canonique à partir des infos Groq et la pousse
+  /// au backend via PATCH /analyses/{id}. Silencieux en cas d'erreur.
+  Future<void> _pushCategoryToBackend(Map<String, dynamic> info) async {
+    final a = widget.analysis;
+    final id = a?['id'];
+    if (id == null) return;
+    String pick(String k) => info[k]?.toString().trim().toLowerCase() ?? '';
+    final tox = pick('toxicite');
+    final comest = pick('est_comestible');
+    final med = pick('est_medicinale');
+
+    String category;
+    if (tox == 'élevée' || tox == 'elevee' || tox == 'eleveE') {
+      category = 'toxique';
+    } else if (comest == 'oui' || comest == 'partiellement') {
+      category = 'comestible';
+    } else if (med == 'oui') {
+      category = 'medicinale';
+    } else if (tox == 'moyenne') {
+      category = 'toxique';
+    } else {
+      category = 'inconnu';
+    }
+
+    try {
+      await ApiService.instance.patchJson('/analyses/$id', {
+        'category': category,
+      });
+      debugPrint('[EcranResultat] PATCH category=$category OK');
+    } catch (e) {
+      debugPrint('[EcranResultat] PATCH category erreur (ignoré): $e');
+    }
+  }
+
+  String _stringOr(String key, String fallback) {
+    final v = _plantInfo?[key];
+    if (v == null) return fallback;
+    final s = v.toString().trim();
+    if (s.isEmpty ||
+        s.toLowerCase() == 'inconnu' ||
+        s.toLowerCase() == 'inconnue') {
+      return fallback;
+    }
+    return s;
+  }
+
+  List<String> _listOr(String key) {
+    final v = _plantInfo?[key];
+    if (v is List) {
+      return v
+          .map((e) => e.toString())
+          .where((s) => s.trim().isNotEmpty)
+          .toList();
+    }
+    return [];
+  }
+
   @override
   Widget build(BuildContext context) {
     final analysis = widget.analysis;
@@ -32,88 +182,40 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
     const Color onSurfaceVariant = Color(0xFF40493d);
     const Color error = Color(0xFFba1a1a);
 
+    // Valeurs tirées des infos IA (avec fallback)
+    final commonNames = _listOr('noms_communs');
+    final famille = _stringOr('famille', '');
+    final santeText = _stringOr(
+      'sante_plante',
+      'Aucune information disponible.',
+    );
+    final toxicite = _stringOr('toxicite', 'inconnue');
+    final toxiciteDetails = _stringOr(
+      'toxicite_details',
+      'Aucune donnée de sécurité disponible.',
+    );
+    final usagesList = _listOr('usages_traditionnels');
+    final usagesText = usagesList.isEmpty
+        ? _stringOr('medicinale_details', 'Aucun usage documenté.')
+        : usagesList.map((u) => '• $u').join('\n');
+    final estComestible = _stringOr('est_comestible', 'inconnu');
+    final estMedicinale = _stringOr('est_medicinale', 'inconnu');
+
+    // Couleur du badge toxicité selon niveau
+    Color toxColor = onSurfaceVariant;
+    final tLower = toxicite.toLowerCase();
+    if (tLower == 'élevée' || tLower == 'elevee' || tLower == 'élevee') {
+      toxColor = error;
+    } else if (tLower == 'moyenne') {
+      toxColor = const Color(0xFFb58900);
+    } else if (tLower == 'faible') {
+      toxColor = const Color(0xFF8a8a3a);
+    } else if (tLower == 'aucune') {
+      toxColor = primary;
+    }
+
     return Scaffold(
       backgroundColor: background,
-      appBar: AppBar(
-        backgroundColor: background,
-        elevation: 0,
-        centerTitle: true,
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.menu, color: primary),
-            const SizedBox(width: 12),
-            Text(
-              'Vision',
-              style: GoogleFonts.manrope(
-                fontWeight: FontWeight.w800,
-                color: primary,
-                fontSize: 18,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          if (analysis != null && analysis['id'] != null)
-            IconButton(
-              icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-              onPressed: () async {
-                final ok = await showDialog<bool>(
-                  context: context,
-                  builder: (dialogContext) => AlertDialog(
-                    title: const Text('Supprimer'),
-                    content: const Text('Supprimer cette analyse ?'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(dialogContext, false),
-                        child: const Text('Annuler'),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.pop(dialogContext, true),
-                        child: const Text('Supprimer'),
-                      ),
-                    ],
-                  ),
-                );
-                if (ok == true) {
-                  try {
-                    await ApiService.instance.delete(
-                      '/analyses/${analysis['id']}',
-                    );
-                  } catch (_) {}
-                  if (!mounted) return;
-                  if (!context.mounted) return;
-                  Navigator.pop(context);
-                }
-              },
-            ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12.0),
-            child: Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: surfaceLowest,
-                shape: BoxShape.circle,
-                border: Border.all(color: primary.withAlpha(25)),
-              ),
-              child: ClipOval(
-                child: analysis != null && analysis['id'] != null
-                    ? Image.network(
-                        '${ApiService.instance.baseUrl}/analyses/${analysis['id']}/image',
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) =>
-                            const Icon(Icons.image_not_supported),
-                      )
-                    : Image.network(
-                        'https://lh3.googleusercontent.com/aida-public/AB6AXuCnJhOSvXRDTeaItBje4VL2E-SwknHLkwIszXXNmKIW9bhgNHm-FyNcg7Mb1u1rUsLG7mN-OVOIVMQVgfyynNyE_03g3PQuxxrC8cLf16SkM-XUtSohK1FNlxn5UxNVK860SVAI7E3LOVKdgTPl5VhN5k_PSCiOi6jyWwW_Nv0nrnpdRtFz2IJx5ShTS0sHAb4lvpyKBTQcycfAzxBNCnvWrSNCs-ladWaZeIHreLJtPU9u8h0Q-sHZZVGF-x2PY7JS6S6Dazy3GOez',
-                        fit: BoxFit.cover,
-                      ),
-              ),
-            ),
-          ),
-        ],
-      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
@@ -148,9 +250,15 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
                                   File(analysis['image_path']),
                                   fit: BoxFit.cover,
                                 )
-                              : Image.network(
-                                  'https://lh3.googleusercontent.com/aida-public/AB6AXuDB7dGdE17-9V6cBRNjKIGtf7l8jsiBns-kPTrMm7YH2K-8zn3-zU2fzJW-jF8xU_496dDVz7OsIHc6kfgKgnFVpb4GVzrD__9sHxRVFz0uRWrkXGpYca2UcwBBcNkJNrSI68k3FDY86_Iyov1YteUeMAtlH9JA9sLTG8ERkkRaGtfazimiEroQZN2EEr4XhPxJrTc55aZ0Vn_OnIBHcHyE7sS77PT0cpB0tE2horBOFR4u0-gML6ARLAK-pWlDlkc4tgv7revgLGPt',
-                                  fit: BoxFit.cover,
+                              : Container(
+                                  color: surfaceLow,
+                                  child: const Center(
+                                    child: Icon(
+                                      Icons.eco,
+                                      size: 64,
+                                      color: primary,
+                                    ),
+                                  ),
                                 ),
                         ),
                       ),
@@ -174,27 +282,39 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    'IDENTIFIÉ',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 2,
-                                      color: Color(0xFF0d631b),
-                                    ),
+                                  _ConfidenceBadge(
+                                    level: widget.confidenceLevel,
+                                    ambiguous: widget.ambiguous,
                                   ),
                                   const SizedBox(height: 6),
                                   Text(
-                                    (analysis != null &&
-                                            analysis['plant_id'] != null)
-                                        ? analysis['plant_id'].toString()
-                                        : 'Non identifié',
+                                    _plantName,
                                     style: GoogleFonts.manrope(
                                       fontSize: 26,
                                       fontWeight: FontWeight.w800,
                                       color: onSurface,
                                     ),
                                   ),
+                                  if (commonNames.isNotEmpty) ...[
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      commonNames.take(3).join(', '),
+                                      style: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        color: onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                  if (famille.isNotEmpty) ...[
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Famille : $famille',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 12,
+                                        color: onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
                                   const SizedBox(height: 12),
                                   Wrap(
                                     spacing: 8,
@@ -208,12 +328,18 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
                                               builder: (_) =>
                                                   EcranDetailComestible(
                                                     analysis: analysis,
+                                                    plantInfo: _plantInfo,
+                                                    plantName: _plantName,
                                                   ),
                                             ),
                                           );
                                         },
                                         child: _Badge(
-                                          text: 'COMESTIBLE',
+                                          text: estComestible == 'oui'
+                                              ? 'COMESTIBLE'
+                                              : estComestible == 'partiellement'
+                                              ? 'COMESTIBLE (partiel)'
+                                              : 'COMESTIBLE',
                                           bg: const Color(0xFFdae6d1),
                                           fg: const Color(0xFF3f4a3a),
                                         ),
@@ -226,6 +352,8 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
                                               builder: (_) =>
                                                   EcranDetailMedicinale(
                                                     analysis: analysis,
+                                                    plantInfo: _plantInfo,
+                                                    plantName: _plantName,
                                                   ),
                                             ),
                                           );
@@ -248,43 +376,63 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
                   ),
 
                   const SizedBox(height: 20),
-                  const SizedBox(height: 20),
 
-                  // Metadata cards
-                  if (analysis != null) ...[
-                    Text(
-                      'Détails',
-                      style: GoogleFonts.manrope(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
+                  // Autres identifications possibles (top-3) — affiché
+                  // uniquement si pertinent : ambiguïté ou confiance faible/moyenne.
+                  if (widget.candidates != null &&
+                      widget.candidates!.length > 1 &&
+                      (widget.ambiguous ||
+                          widget.confidenceLevel != 'high'))
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: _CandidatesSection(
+                        candidates: widget.candidates!,
+                        currentName: _plantName,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    _KeyValueCard(
-                      title: 'ID',
-                      value: '${analysis['id'] ?? ''}',
+
+                  // Loading / error banner
+                  if (_loadingInfo)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        children: [
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            'Chargement des informations botaniques…',
+                            style: GoogleFonts.inter(color: onSurfaceVariant),
+                          ),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    _KeyValueCard(
-                      title: 'Date',
-                      value: analysis['created_at'] ?? '',
+                  if (_infoError != null && !_loadingInfo)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.warning_amber_rounded,
+                            color: Color(0xFFb58900),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Infos IA indisponibles (${_infoError!})',
+                              style: GoogleFonts.inter(color: onSurfaceVariant),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: _fetchPlantInfo,
+                            child: const Text('Réessayer'),
+                          ),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    _KeyValueCard(
-                      title: 'Plante',
-                      value: analysis['plant_id']?.toString() ?? '—',
-                    ),
-                    const SizedBox(height: 8),
-                    _KeyValueCard(
-                      title: 'Raw result',
-                      value: (() {
-                        final r = analysis['result']?.toString() ?? '';
-                        if (r.isEmpty) return '—';
-                        return r.length > 400 ? '${r.substring(0, 400)}...' : r;
-                      })(),
-                    ),
-                    const SizedBox(height: 20),
-                  ],
 
                   // Cards grid (dynamic)
                   Wrap(
@@ -299,32 +447,9 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
                           icon: Icons.eco,
                           iconColor: primary,
                           title: 'Santé de la plante',
-                          bodyTitle: 'Vitalité',
-                          bodyValue: (() {
-                            if (analysis != null) {
-                              if (analysis['health_score'] != null) {
-                                return '${analysis['health_score']}%';
-                              }
-                              if (analysis['health'] != null) {
-                                return analysis['health'].toString();
-                              }
-                            }
-                            return '—';
-                          })(),
-                          bodyText: (() {
-                            if (analysis != null) {
-                              if (analysis['health_summary'] != null) {
-                                return analysis['health_summary'].toString();
-                              }
-                              final r = analysis['result']?.toString() ?? '';
-                              if (r.isNotEmpty) {
-                                return r.length > 200
-                                    ? '${r.substring(0, 200)}...'
-                                    : r;
-                              }
-                            }
-                            return 'Aucune information disponible.';
-                          })(),
+                          bodyTitle: 'Nom scientifique',
+                          bodyValue: _plantName,
+                          bodyText: santeText,
                           bg: surfaceLowest,
                         ),
                       ),
@@ -335,33 +460,11 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
                             : double.infinity,
                         child: _InfoCard(
                           icon: Icons.health_and_safety,
-                          iconColor: error,
+                          iconColor: toxColor,
                           title: 'Toxicité & Sécurité',
-                          bodyTitle: '',
-                          bodyValue: '',
-                          bodyText: (() {
-                            if (analysis != null) {
-                              if (analysis['toxicity'] != null) {
-                                return analysis['toxicity'].toString();
-                              }
-                              if (analysis['safety_notes'] != null) {
-                                return analysis['safety_notes'].toString();
-                              }
-                              final r = analysis['result']?.toString() ?? '';
-                              if (r.isNotEmpty) {
-                                // simple heuristic: show short excerpt mentioning toxicity if present
-                                final lower = r.toLowerCase();
-                                if (lower.contains('tox') ||
-                                    lower.contains('danger') ||
-                                    lower.contains('attention')) {
-                                  return lower.length > 300
-                                      ? '${r.substring(0, 300)}...'
-                                      : r;
-                                }
-                              }
-                            }
-                            return 'Aucune donnée de sécurité disponible.';
-                          })(),
+                          bodyTitle: 'Niveau',
+                          bodyValue: toxicite.toUpperCase(),
+                          bodyText: toxiciteDetails,
                           bg: surfaceLowest,
                         ),
                       ),
@@ -372,28 +475,9 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
                           icon: Icons.history_edu,
                           iconColor: const Color(0xFF2e5c5c),
                           title: 'Usages traditionnels',
-                          bodyTitle: '',
-                          bodyValue: '',
-                          bodyText: (() {
-                            if (analysis != null) {
-                              if (analysis['usages'] != null) {
-                                return analysis['usages'].toString();
-                              }
-                              if (analysis['usages_list'] != null &&
-                                  analysis['usages_list'] is List) {
-                                return (analysis['usages_list'] as List).join(
-                                  '\n',
-                                );
-                              }
-                              final r = analysis['result']?.toString() ?? '';
-                              if (r.isNotEmpty) {
-                                return r.length > 300
-                                    ? '${r.substring(0, 300)}...'
-                                    : r;
-                              }
-                            }
-                            return 'Aucun usage documenté.';
-                          })(),
+                          bodyTitle: estMedicinale == 'oui' ? 'Médicinale' : '',
+                          bodyValue: estMedicinale == 'oui' ? 'OUI' : '',
+                          bodyText: usagesText,
                           bg: surfaceLow,
                         ),
                       ),
@@ -402,7 +486,7 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
 
                   const SizedBox(height: 20),
 
-                  // IA call to action (card with full-width pill button)
+                  // IA call to action
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -483,6 +567,16 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
                     ),
                   ),
 
+                  // Panneau de diagnostic pliable
+                  const SizedBox(height: 24),
+                  _DebugPanel(
+                    analysis: analysis,
+                    plantName: _plantName,
+                    plantInfo: _plantInfo,
+                    loadingInfo: _loadingInfo,
+                    infoError: _infoError,
+                  ),
+
                   const SizedBox(height: 100),
                 ],
               ),
@@ -503,9 +597,12 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
                   MaterialPageRoute(builder: (_) => const EcranAccueil()),
                 );
               },
-              child: const _SmallNav(icon: Icons.home, label: 'ACCUEIL'),
+              child: _SmallNav(icon: Icons.home, label: I18n.tr('nav.home')),
             ),
-            const _SmallNav(icon: Icons.center_focus_strong, label: 'ANALYSER'),
+            _SmallNav(
+              icon: Icons.center_focus_strong,
+              label: I18n.tr('nav.analyse'),
+            ),
             GestureDetector(
               onTap: () {
                 Navigator.pushReplacement(
@@ -513,7 +610,10 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
                   MaterialPageRoute(builder: (_) => const EcranHistorique()),
                 );
               },
-              child: const _SmallNav(icon: Icons.history, label: 'HISTORIQUE'),
+              child: _SmallNav(
+                icon: Icons.history,
+                label: I18n.tr('nav.history'),
+              ),
             ),
             GestureDetector(
               onTap: () {
@@ -522,9 +622,9 @@ class _EcranResultatAnalyseState extends State<EcranResultatAnalyse> {
                   MaterialPageRoute(builder: (_) => const EcranTableau()),
                 );
               },
-              child: const _SmallNav(
+              child: _SmallNav(
                 icon: Icons.dashboard,
-                label: 'TABLEAU',
+                label: I18n.tr('nav.dashboard'),
                 active: true,
               ),
             ),
@@ -606,10 +706,12 @@ class _InfoCard extends StatelessWidget {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        bodyTitle,
-                        style: GoogleFonts.inter(
-                          color: const Color(0xFF40493d),
+                      Expanded(
+                        child: Text(
+                          bodyTitle,
+                          style: GoogleFonts.inter(
+                            color: const Color(0xFF40493d),
+                          ),
                         ),
                       ),
                       Text(
@@ -631,32 +733,6 @@ class _InfoCard extends StatelessWidget {
               height: 1.4,
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _KeyValueCard extends StatelessWidget {
-  final String title;
-  final String value;
-  const _KeyValueCard({required this.title, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFFFFF),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Text(
-            '$title: ',
-            style: GoogleFonts.inter(fontWeight: FontWeight.w700),
-          ),
-          Expanded(child: Text(value, style: GoogleFonts.inter())),
         ],
       ),
     );
@@ -698,6 +774,411 @@ class _SmallNav extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Badge dynamique reflétant le niveau de confiance de l'identification.
+class _ConfidenceBadge extends StatelessWidget {
+  final String? level; // high | medium | low | null
+  final bool ambiguous;
+  const _ConfidenceBadge({this.level, this.ambiguous = false});
+
+  @override
+  Widget build(BuildContext context) {
+    String label;
+    Color bg;
+    Color fg;
+    IconData icon;
+    if (ambiguous) {
+      label = 'IDENTIFICATION AMBIGUË';
+      bg = const Color(0xFF477575);
+      fg = Colors.white;
+      icon = Icons.help_outline;
+    } else {
+      switch (level) {
+        case 'high':
+          label = 'IDENTIFIÉ • CONFIANCE ÉLEVÉE';
+          bg = const Color(0xFF0d631b);
+          fg = Colors.white;
+          icon = Icons.verified;
+          break;
+        case 'medium':
+          label = 'IDENTIFIÉ • CONFIANCE MOYENNE';
+          bg = const Color(0xFFb58900);
+          fg = Colors.white;
+          icon = Icons.info_outline;
+          break;
+        case 'low':
+          label = 'IDENTIFIÉ • CONFIANCE FAIBLE';
+          bg = const Color(0xFFc94f00);
+          fg = Colors.white;
+          icon = Icons.warning_amber_rounded;
+          break;
+        default:
+          label = 'IDENTIFIÉ';
+          bg = const Color(0xFF0d631b);
+          fg = Colors.white;
+          icon = Icons.eco;
+      }
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: fg),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.2,
+              color: fg,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Section "Autres identifications possibles" — liste les top-3 candidats
+/// PlantNet pour permettre à l'utilisateur de confirmer ou corriger.
+class _CandidatesSection extends StatelessWidget {
+  final List<Map<String, dynamic>> candidates;
+  final String currentName;
+  const _CandidatesSection({
+    required this.candidates,
+    required this.currentName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E1),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: const Color(0xFFb58900).withAlpha(80),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.lightbulb_outline,
+                size: 18,
+                color: Color(0xFFb58900),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Autres identifications possibles',
+                style: GoogleFonts.manrope(
+                  fontWeight: FontWeight.w800,
+                  color: const Color(0xFF6b4c00),
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'PlantNet a hésité entre plusieurs espèces. Si tu connais ta plante, choisis la bonne.',
+            style: GoogleFonts.inter(
+              color: const Color(0xFF6b4c00),
+              fontSize: 11,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ...candidates.map((c) {
+            final name = c['scientific_name']?.toString() ?? '?';
+            final score = (c['score'] as num?)?.toDouble() ?? 0.0;
+            final commons = (c['common_names'] as List?)
+                    ?.map((e) => e.toString())
+                    .toList() ??
+                [];
+            final isCurrent = name == currentName;
+            return Container(
+              margin: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: isCurrent
+                    ? const Color(0xFF0d631b).withAlpha(30)
+                    : Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: isCurrent
+                      ? const Color(0xFF0d631b)
+                      : Colors.transparent,
+                ),
+              ),
+              child: Row(
+                children: [
+                  if (isCurrent) ...[
+                    const Icon(Icons.check_circle,
+                        size: 16, color: Color(0xFF0d631b)),
+                    const SizedBox(width: 6),
+                  ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name,
+                          style: GoogleFonts.manrope(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
+                        ),
+                        if (commons.isNotEmpty)
+                          Text(
+                            commons.take(2).join(', '),
+                            style: GoogleFonts.inter(
+                              fontSize: 11,
+                              color: const Color(0xFF40493d),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0d631b).withAlpha(40),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '${(score * 100).toStringAsFixed(0)}%',
+                      style: GoogleFonts.manrope(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF0d631b),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}
+
+/// Panneau de diagnostic — montre les données brutes reçues du backend
+/// et l'état de chaque étape (PlantNet, Groq). Très utile quand rien
+/// ne s'affiche pour comprendre POURQUOI.
+class _DebugPanel extends StatefulWidget {
+  final Map<String, dynamic>? analysis;
+  final String plantName;
+  final Map<String, dynamic>? plantInfo;
+  final bool loadingInfo;
+  final String? infoError;
+  const _DebugPanel({
+    required this.analysis,
+    required this.plantName,
+    required this.plantInfo,
+    required this.loadingInfo,
+    required this.infoError,
+  });
+
+  @override
+  State<_DebugPanel> createState() => _DebugPanelState();
+}
+
+class _DebugPanelState extends State<_DebugPanel> {
+  bool _open = false;
+
+  @override
+  Widget build(BuildContext context) {
+    const Color border = Color(0xFFb58900);
+    final a = widget.analysis;
+    final hasAnalysis = a != null;
+    final plantIdRaw = a?['plant_id'];
+    final hasPlantId = plantIdRaw != null && plantIdRaw.toString().isNotEmpty;
+    final hasInfo = widget.plantInfo != null && widget.plantInfo!.isNotEmpty;
+
+    String statusPlantNet;
+    if (!hasAnalysis) {
+      statusPlantNet = '❌ Aucune analyse reçue du backend';
+    } else if (!hasPlantId) {
+      statusPlantNet =
+          '⚠️ Analyse reçue mais plant_id vide → PlantNet n\'a rien identifié';
+    } else {
+      statusPlantNet = '✅ Identifié : $plantIdRaw';
+    }
+
+    String statusGroq;
+    if (!hasPlantId) {
+      statusGroq = '⏭️ Non déclenché (pas de nom de plante)';
+    } else if (widget.loadingInfo) {
+      statusGroq = '⏳ En cours…';
+    } else if (widget.infoError != null) {
+      statusGroq = '❌ ${widget.infoError}';
+    } else if (!hasInfo) {
+      statusGroq = '⚠️ Réponse vide';
+    } else {
+      statusGroq = '✅ OK (${widget.plantInfo!.keys.length} champs)';
+    }
+
+    String rawJson = '';
+    if (a != null) {
+      try {
+        final copy = Map<String, dynamic>.from(a);
+        // Tronque le champ result (raw PlantNet) qui peut être énorme
+        final r = copy['result']?.toString();
+        if (r != null && r.length > 400) {
+          copy['result'] =
+              '${r.substring(0, 400)}... [${r.length} chars total]';
+        }
+        const encoder = JsonEncoder.withIndent('  ');
+        rawJson = encoder.convert(copy);
+      } catch (e) {
+        rawJson = 'Erreur encodage : $e';
+      }
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8E1),
+        border: Border.all(color: border.withAlpha(80)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: () => setState(() => _open = !_open),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  const Icon(Icons.bug_report, color: border, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Diagnostic (appuie pour ${_open ? "fermer" : "ouvrir"})',
+                      style: GoogleFonts.manrope(
+                        color: const Color(0xFF6b4c00),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    _open ? Icons.expand_less : Icons.expand_more,
+                    color: border,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_open) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'URL backend : ${ApiService.instance.baseUrl}',
+                    style: GoogleFonts.jetBrainsMono(fontSize: 11),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Nom extrait : ${widget.plantName}',
+                    style: GoogleFonts.jetBrainsMono(fontSize: 11),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Étape 1 — PlantNet :',
+                    style: GoogleFonts.manrope(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                  Text(
+                    statusPlantNet,
+                    style: GoogleFonts.jetBrainsMono(fontSize: 11),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Étape 2 — Groq (getPlantInfo) :',
+                    style: GoogleFonts.manrope(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                  Text(
+                    statusGroq,
+                    style: GoogleFonts.jetBrainsMono(fontSize: 11),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Données brutes reçues du backend :',
+                    style: GoogleFonts.manrope(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withAlpha(15),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: SelectableText(
+                      rawJson.isEmpty ? '(null)' : rawJson,
+                      style: GoogleFonts.jetBrainsMono(fontSize: 10),
+                    ),
+                  ),
+                  if (widget.plantInfo != null &&
+                      widget.plantInfo!.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      'Infos IA (Groq) :',
+                      style: GoogleFonts.manrope(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withAlpha(15),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: SelectableText(
+                        const JsonEncoder.withIndent(
+                          '  ',
+                        ).convert(widget.plantInfo),
+                        style: GoogleFonts.jetBrainsMono(fontSize: 10),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

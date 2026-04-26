@@ -2,32 +2,43 @@ version: '3.8'
 
 services:
   db:
-    image: postgres:15
+    image: mysql:8.0
     restart: unless-stopped
     environment:
-      POSTGRES_USER: plante_user
-      POSTGRES_PASSWORD: example_password
-      POSTGRES_DB: plante_db
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: plante_db
+      MYSQL_USER: plante_user
+      MYSQL_PASSWORD: example_password
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - mysqldata:/var/lib/mysql
     ports:
-      - "5432:5432"
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "plante_user", "-pexample_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   backend:
     image: python:3.11-slim
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     working_dir: /app
     volumes:
       - ./:/app:rw
       - uploads:/app/backend/uploads
     environment:
-      # Utilise le service 'db' comme hôte pour PostgreSQL
-      DATABASE_URL: postgresql://plante_user:example_password@db:5432/plante_db
+      # Connexion MySQL : driver pymysql + charset utf8mb4 pour supporter les emoji
+      DATABASE_URL: mysql+pymysql://plante_user:example_password@db:3306/plante_db?charset=utf8mb4
     ports:
       - "8000:8000"
     command: bash -c "pip install --upgrade pip && pip install -r backend/requirements.txt && python backend/models.py && uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload"
 
 volumes:
-  pgdata:
+  mysqldata:
   uploads:

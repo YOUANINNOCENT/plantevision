@@ -6,6 +6,10 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Plante a besoin d'accéder à la caméra pour analyser les spécimens.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Plante utilise votre position pour géolocaliser les scans de plantes.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Plante utilise votre position pour géolocaliser les scans de plantes.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

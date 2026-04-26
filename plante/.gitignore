@@ -12,6 +12,11 @@
 .swiftpm/
 migrate_working_dir/
 
+# Secrets (credentials SMTP, API keys, etc.) — NE JAMAIS commit
+.env
+backend/.env
+**/.env
+
 # IntelliJ related
 *.iml
 *.ipr

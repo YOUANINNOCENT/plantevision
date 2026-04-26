@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'ecran_parametres_compte.dart';
-import 'ecran_langue.dart';
 import 'services/api_service.dart';
 
 class EcranProfil extends StatefulWidget {
@@ -23,7 +22,12 @@ class _EcranProfilState extends State<EcranProfil> {
 
   Future<void> _fetchUser() async {
     try {
-      final j = await ApiService.instance.getJson('/users/1');
+      final uid = ApiService.instance.currentUserId;
+      if (uid == null) {
+        setState(() => _loading = false);
+        return;
+      }
+      final j = await ApiService.instance.getJson('/users/$uid');
       setState(() {
         _user = Map<String, dynamic>.from(j);
       });
@@ -224,20 +228,6 @@ class _EcranProfilState extends State<EcranProfil> {
                           ),
                           const Divider(height: 0),
                           _SettingRow(
-                            icon: Icons.language,
-                            title: 'Langue',
-                            trailing: Text(
-                              'Français',
-                              style: GoogleFonts.inter(color: onSurfaceVariant),
-                            ),
-                            onTap: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const EcranLangue(),
-                              ),
-                            ),
-                          ),
-                          const Divider(height: 0),
-                          _SettingRow(
                             icon: Icons.lock,
                             title: 'Confidentialité',
                             onTap: () {},
@@ -330,13 +320,11 @@ class _StatCard extends StatelessWidget {
 class _SettingRow extends StatelessWidget {
   final IconData icon;
   final String title;
-  final Widget? trailing;
   final VoidCallback? onTap;
 
   const _SettingRow({
     required this.icon,
     required this.title,
-    this.trailing,
     this.onTap,
   });
 
@@ -361,9 +349,6 @@ class _SettingRow extends StatelessWidget {
                   ),
                 ),
               ),
-              ...((trailing != null)
-                  ? [trailing!, const SizedBox(width: 8)]
-                  : []),
               const Icon(Icons.chevron_right, color: Color(0xFF707a6c)),
             ],
           ),

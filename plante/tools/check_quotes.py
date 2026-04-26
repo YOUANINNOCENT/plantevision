@@ -28,9 +28,13 @@ for p in ROOT.rglob('*'):
         if total % 2 == 1 or bad_lines:
             issues.append((p.relative_to(ROOT), total, bad_lines))
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 if not issues:
-    print('No unbalanced double quotes found in PowerShell files')
+    logger.info('No unbalanced double quotes found in PowerShell files')
 else:
     for p,total,bad in issues:
-        print(f"{p} -> total_quotes={total} bad_lines={bad}")
+        logger.info('%s -> total_quotes=%d bad_lines=%s', p, total, bad)
     raise SystemExit(2)

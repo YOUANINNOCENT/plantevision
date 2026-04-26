@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:async' show TimeoutException;
 import 'services/api_service.dart';
 
@@ -321,7 +322,43 @@ class _EcranAssistantChatState extends State<EcranAssistantChat> {
                               ),
                               const SizedBox(height: 12),
                               // If the AI message contains an image, render it
-                              if (m.containsKey('image_b64')) ...[
+                              if (m.containsKey('image_bytes')) ...[
+                                if ((m['text'] ?? '').isNotEmpty) ...[
+                                  Text(
+                                    m['text'] ?? '',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 14,
+                                      color: const Color(0xFF1b1d0e),
+                                      height: 1.4,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                ],
+                                Builder(
+                                  builder: (c) {
+                                    try {
+                                      final bytes =
+                                          m['image_bytes'] as Uint8List;
+                                      return ClipRRect(
+                                        borderRadius: BorderRadius.circular(12),
+                                        child: Image.memory(
+                                          bytes,
+                                          width:
+                                              MediaQuery.of(
+                                                context,
+                                              ).size.width *
+                                              0.8,
+                                          height: 240,
+                                          fit: BoxFit.contain,
+                                        ),
+                                      );
+                                    } catch (e) {
+                                      return Text('Erreur affichage image: $e');
+                                    }
+                                  },
+                                ),
+                                const SizedBox(height: 14),
+                              ] else if (m.containsKey('image_b64')) ...[
                                 if ((m['text'] ?? '').isNotEmpty) ...[
                                   Text(
                                     m['text'] ?? '',
@@ -549,12 +586,12 @@ class _EcranAssistantChatState extends State<EcranAssistantChat> {
     _scrollToEnd();
 
     try {
-      final imgB64 = await _generateImageBackend(prompt, '512x512');
+      final bytes = await _generateImageBackend(prompt, '512x512');
       setState(() {
         _messages.removeWhere((m) => m['loading'] == true);
         _messages.add({
           'role': 'ai',
-          'image_b64': imgB64,
+          'image_bytes': bytes,
           'text': '',
           'time': _now(),
         });
@@ -589,14 +626,13 @@ class _EcranAssistantChatState extends State<EcranAssistantChat> {
 
   Future<Map<String, dynamic>> _askBackend(String message) async {
     try {
-      final Map<String, dynamic> payload = {'message': message};
-      if (_currentConversationId != null) {
-        payload['conversation_id'] = _currentConversationId;
-      }
-      final j = await ApiService.instance
-          .postJson('/ask', payload)
-          .timeout(const Duration(seconds: 30));
+      final j = await ApiService.instance.groqChatCompletion(
+        message,
+        timeout: const Duration(seconds: 30),
+      );
       return Map<String, dynamic>.from(j);
+    } on ApiException catch (e) {
+      throw 'Erreur Groq (${e.statusCode}) — ${e.message}';
     } on TimeoutException {
       throw 'Délai d\'attente dépassé — le serveur n\'a pas répondu';
     } catch (e) {
@@ -604,14 +640,31 @@ class _EcranAssistantChatState extends State<EcranAssistantChat> {
     }
   }
 
-  Future<String> _generateImageBackend(String prompt, String size) async {
+  Future<Uint8List> _generateImageBackend(String prompt, String size) async {
     try {
+      // Le backend renvoie un JSON { status, image_b64 } et NON des octets bruts
+      // — on doit donc appeler postJson puis décoder le base64 nous-mêmes.
       final j = await ApiService.instance
           .postJson('/generate_image', {'prompt': prompt, 'size': size})
           .timeout(const Duration(seconds: 60));
-      return j['image_b64']?.toString() ?? '';
+      final raw = j['image_b64']?.toString() ?? '';
+      if (raw.isEmpty) {
+        throw 'Réponse serveur sans image (image_b64 vide)';
+      }
+      // Nettoyage : enlève préfixe data:..., espaces, retours à la ligne
+      var clean = raw.trim();
+      final dataPrefix = RegExp(r'^data:image/[^;]+;base64,');
+      clean = clean.replaceFirst(dataPrefix, '');
+      clean = clean.replaceAll(RegExp(r'\s+'), '');
+      try {
+        return base64Decode(clean);
+      } catch (e) {
+        throw 'Image invalide (impossible de décoder le base64): $e';
+      }
     } on TimeoutException {
       throw 'Délai d\'attente dépassé — le serveur n\'a pas répondu';
+    } on ApiException catch (e) {
+      throw 'Erreur ${e.statusCode} — ${e.message}';
     } catch (e) {
       throw 'Erreur de connexion — ${e.toString()}';
     }

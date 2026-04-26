@@ -26,7 +26,12 @@ class _EcranToutState extends State<EcranTout> {
       if (ApiService.instance.baseUrl == 'https://api.example.com') {
         ApiService.instance.baseUrl = 'http://127.0.0.1:8000';
       }
-      final resp = await ApiService.instance.getJson('/analyses/1');
+      final uid = ApiService.instance.currentUserId;
+      if (uid == null) {
+        setState(() => _analyses = []);
+        return;
+      }
+      final resp = await ApiService.instance.getJson('/analyses/$uid');
       setState(() {
         _analyses = resp['results'] ?? [];
       });

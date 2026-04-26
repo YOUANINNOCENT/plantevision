@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'ecran_scanner.dart';
 import 'ecran_resultat_analyse.dart';
 import 'ecran_historique.dart';
+import 'services/i18n.dart';
 import 'ecran_tableau.dart';
 import 'ecran_tout.dart';
 import 'ecran_menu.dart';
@@ -30,7 +31,12 @@ class _EcranAccueilState extends State<EcranAccueil> {
       if (ApiService.instance.baseUrl == 'https://api.example.com') {
         ApiService.instance.baseUrl = 'http://127.0.0.1:8000';
       }
-      final resp = await ApiService.instance.getJson('/analyses/1');
+      final uid = ApiService.instance.currentUserId;
+      if (uid == null) {
+        if (mounted) setState(() => _analyses = []);
+        return;
+      }
+      final resp = await ApiService.instance.getJson('/analyses/$uid');
       setState(() {
         _analyses = resp['results'] ?? [];
       });
@@ -318,10 +324,10 @@ class _EcranAccueilState extends State<EcranAccueil> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
-            _NavItem(icon: Icons.home, label: 'Accueil', active: true),
+            _NavItem(icon: Icons.home, label: I18n.tr('nav.home'), active: true),
             _NavItem(
               icon: Icons.center_focus_strong,
-              label: 'Analyser',
+              label: I18n.tr('nav.analyse'),
               onTap: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(
@@ -332,7 +338,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
             ),
             _NavItem(
               icon: Icons.history,
-              label: 'Historique',
+              label: I18n.tr('nav.history'),
               onTap: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const EcranHistorique()),
@@ -341,7 +347,7 @@ class _EcranAccueilState extends State<EcranAccueil> {
             ),
             _NavItem(
               icon: Icons.dashboard,
-              label: 'Tableau',
+              label: I18n.tr('nav.dashboard'),
               onTap: () {
                 Navigator.of(
                   context,

@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'dart:convert';
-import 'dart:typed_data';
+
 import 'dart:async' show TimeoutException;
 
 import 'package:google_fonts/google_fonts.dart';
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart' as geocoding;
 import 'ecran_accueil.dart';
 import 'ecran_historique.dart';
 import 'ecran_tableau.dart';
 import 'ecran_resultat_analyse.dart';
 import 'package:plante/services/api_service.dart';
+import 'package:plante/services/i18n.dart';
 
 class EcranScanner extends StatefulWidget {
   const EcranScanner({super.key});
@@ -20,16 +24,18 @@ class EcranScanner extends StatefulWidget {
 }
 
 class _EcranScannerState extends State<EcranScanner>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   CameraController? _cameraController;
   bool _isCameraInitialized = false;
   Uint8List? _pickedImageBytes;
   // Dynamic config from backend
-  String? _avatarUrl;
-  bool _isExpert = false;
-  String _hintTitle = 'Mode Expert Activé';
-  String _hintSubtitle = 'Analyse taxonomique automatique en cours...';
   String? _backgroundImageUrl;
+  late final AnimationController _scanController;
+  late final Animation<double> _scanAnimation;
+  // État de la lampe torche
+  bool _flashOn = false;
+  // Arrête l'animation de la ligne verte pendant capture/upload
+  bool _scanning = false;
 
   @override
   void initState() {
@@ -37,36 +43,28 @@ class _EcranScannerState extends State<EcranScanner>
     WidgetsBinding.instance.addObserver(this);
     _initCamera();
     _loadConfig();
+    // Scanning line animation: moves the green line up and down
+    _scanController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    );
+    _scanAnimation = CurvedAnimation(
+      parent: _scanController,
+      curve: Curves.easeInOut,
+    );
+    _scanController.repeat(reverse: true);
   }
 
   Future<void> _loadConfig() async {
     try {
-      // load user info
-      try {
-        final uRaw = await ApiService.instance.getJson('/users/1');
-        final u = Map<String, dynamic>.from(uRaw as Map);
-        setState(() {
-          _avatarUrl = u['avatar_url']?.toString();
-          _isExpert = (u['is_premium'] == true) || (u['is_expert'] == true);
-        });
-      } catch (_) {
-        // ignore missing user or fields
-      }
-
       // load dashboard to customize hints/background
       try {
         final dRaw = await ApiService.instance.getJson('/dashboard');
         final d = Map<String, dynamic>.from(dRaw as Map);
-        final stats = d['stats'] != null
-            ? Map<String, dynamic>.from(d['stats'] as Map)
-            : <String, dynamic>{};
         final donut = d['donut'] != null
             ? Map<String, dynamic>.from(d['donut'] as Map)
             : <String, dynamic>{};
         setState(() {
-          _hintTitle = _isExpert ? 'Mode Expert Activé' : 'Mode Normal';
-          _hintSubtitle =
-              'Scans: ${stats['total_scans'] ?? '—'} • Espèces: ${stats['species_count'] ?? '—'}';
           _backgroundImageUrl = donut['background_image']?.toString();
         });
       } catch (_) {
@@ -88,10 +86,13 @@ class _EcranScannerState extends State<EcranScanner>
         (c) => c.lensDirection == CameraLensDirection.back,
         orElse: () => cameras.first,
       );
+      // Résolution élevée : meilleur taux d'identification PlantNet
+      // (les détails fins des feuilles/nervures comptent énormément).
       _cameraController = CameraController(
         back,
-        ResolutionPreset.medium,
+        ResolutionPreset.high,
         enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
       );
       await _cameraController!.initialize();
       if (!mounted) {
@@ -102,6 +103,64 @@ class _EcranScannerState extends State<EcranScanner>
       });
     } catch (e) {
       // ignore errors for now; keep placeholder
+    }
+  }
+
+  /// Allume / éteint la lampe torche du téléphone via le CameraController.
+  Future<void> _toggleFlash() async {
+    final c = _cameraController;
+    if (c == null || !_isCameraInitialized) return;
+    try {
+      final next = !_flashOn;
+      await c.setFlashMode(next ? FlashMode.torch : FlashMode.off);
+      if (!mounted) return;
+      setState(() => _flashOn = next);
+    } catch (e) {
+      debugPrint('[scanner] setFlashMode erreur: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Lampe torche indisponible sur cet appareil')),
+      );
+    }
+  }
+
+  /// Construit un SnackBar dont le ton (couleur + message) reflète le niveau
+  /// de confiance retourné par le backend.
+  SnackBar _buildConfidenceSnackBar({
+    required String level,
+    required bool ambiguous,
+  }) {
+    String text;
+    Color bg;
+    if (level == 'high' && !ambiguous) {
+      text = 'Analyse terminée — identification fiable';
+      bg = const Color(0xFF0d631b); // vert
+    } else if (level == 'high' && ambiguous) {
+      text = 'Analyse terminée — plusieurs espèces très proches, vérifie';
+      bg = const Color(0xFF2e5c5c); // bleu-vert
+    } else if (level == 'medium') {
+      text = 'Analyse terminée — confiance moyenne, vérifie le résultat';
+      bg = const Color(0xFFb58900); // ocre
+    } else {
+      text = 'Analyse terminée — confiance faible, photo douteuse';
+      bg = const Color(0xFFc94f00); // orange foncé
+    }
+    return SnackBar(content: Text(text), backgroundColor: bg);
+  }
+
+  /// Met l'animation de la ligne de scan en pause (pendant capture/envoi).
+  void _pauseScan() {
+    if (!mounted) return;
+    setState(() => _scanning = true);
+    _scanController.stop();
+  }
+
+  /// Redémarre l'animation après réception du résultat.
+  void _resumeScan() {
+    if (!mounted) return;
+    setState(() => _scanning = false);
+    if (!_scanController.isAnimating) {
+      _scanController.repeat(reverse: true);
     }
   }
 
@@ -164,13 +223,23 @@ class _EcranScannerState extends State<EcranScanner>
           }
           final resp = await _sendIdentify(b64);
           final analysis = resp['analysis'];
+          final level = resp['confidence_level']?.toString() ?? 'medium';
+          final ambiguous = resp['ambiguous'] == true;
           if (!mounted || !useContext.mounted) return;
-          ScaffoldMessenger.of(
-            useContext,
-          ).showSnackBar(const SnackBar(content: Text('Analyse terminée')));
+          ScaffoldMessenger.of(useContext).showSnackBar(
+            _buildConfidenceSnackBar(level: level, ambiguous: ambiguous),
+          );
+          final candidates = (resp['candidates'] as List?)
+              ?.map((e) => Map<String, dynamic>.from(e as Map))
+              .toList();
           Navigator.of(useContext).push(
             MaterialPageRoute(
-              builder: (_) => EcranResultatAnalyse(analysis: analysis),
+              builder: (_) => EcranResultatAnalyse(
+                analysis: analysis,
+                confidenceLevel: level,
+                candidates: candidates,
+                ambiguous: ambiguous,
+              ),
             ),
           );
         } catch (e) {
@@ -178,7 +247,9 @@ class _EcranScannerState extends State<EcranScanner>
           String msg = 'Erreur lors de l\'analyse';
           try {
             if (e is ApiException) {
-              if (e.statusCode == 502) {
+              if (e.statusCode == 422) {
+                msg = e.message; // "Ce n'est pas une plante. Réessaye…"
+              } else if (e.statusCode == 502) {
                 msg = 'Serveur temporairement indisponible';
               } else if (e.statusCode == 504) {
                 msg = 'Le serveur ne répond pas';
@@ -197,9 +268,42 @@ class _EcranScannerState extends State<EcranScanner>
               msg = e.toString();
             }
           } catch (_) {}
-          ScaffoldMessenger.of(
+          final isNotPlant = e is ApiException && e.statusCode == 422;
+          await _showErrorDialog(
             useContext,
-          ).showSnackBar(SnackBar(content: Text(msg)));
+            title: isNotPlant ? 'Pas une plante' : 'Erreur',
+            message: msg,
+            onRetry: () async {
+              // retry sending the same image
+              try {
+                ScaffoldMessenger.of(useContext).showSnackBar(
+                  const SnackBar(content: Text('Envoi en cours...')),
+                );
+                final bytes = _pickedImageBytes;
+                if (bytes == null) throw 'Image introuvable';
+                final b64 = base64Encode(bytes);
+                final resp = await _sendIdentify(b64);
+                final analysis = resp['analysis'];
+                if (!mounted || !useContext.mounted) return;
+                ScaffoldMessenger.of(useContext).showSnackBar(
+                  const SnackBar(content: Text('Analyse terminée')),
+                );
+                Navigator.of(useContext).push(
+                  MaterialPageRoute(
+                    builder: (_) => EcranResultatAnalyse(analysis: analysis),
+                  ),
+                );
+              } catch (e) {
+                String msg2 = 'Échec du nouvel envoi';
+                if (e is ApiException && e.statusCode == 504) {
+                  msg2 = 'Le serveur ne répond toujours pas';
+                }
+                ScaffoldMessenger.of(
+                  useContext,
+                ).showSnackBar(SnackBar(content: Text(msg2)));
+              }
+            },
+          );
         }
       }
     } catch (e) {
@@ -225,13 +329,23 @@ class _EcranScannerState extends State<EcranScanner>
         }
         final resp = await _sendIdentify(b64);
         final analysis = resp['analysis'];
+        final level = resp['confidence_level']?.toString() ?? 'medium';
+        final ambiguous = resp['ambiguous'] == true;
         if (!mounted || !useContext.mounted) return;
-        ScaffoldMessenger.of(
-          useContext,
-        ).showSnackBar(const SnackBar(content: Text('Analyse terminée')));
+        ScaffoldMessenger.of(useContext).showSnackBar(
+          _buildConfidenceSnackBar(level: level, ambiguous: ambiguous),
+        );
+        final candidates = (resp['candidates'] as List?)
+            ?.map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
         Navigator.of(useContext).push(
           MaterialPageRoute(
-            builder: (_) => EcranResultatAnalyse(analysis: analysis),
+            builder: (_) => EcranResultatAnalyse(
+              analysis: analysis,
+              confidenceLevel: level,
+              candidates: candidates,
+              ambiguous: ambiguous,
+            ),
           ),
         );
       } catch (e) {
@@ -258,9 +372,41 @@ class _EcranScannerState extends State<EcranScanner>
             msg = e.toString();
           }
         } catch (_) {}
-        ScaffoldMessenger.of(
+        await _showErrorDialog(
           useContext,
-        ).showSnackBar(SnackBar(content: Text(msg)));
+          title: 'Erreur',
+          message: msg,
+          onRetry: () async {
+            // retry capture send
+            try {
+              ScaffoldMessenger.of(useContext).showSnackBar(
+                const SnackBar(content: Text('Envoi en cours...')),
+              );
+              final xfile2 = await _cameraController!.takePicture();
+              final bytes2 = await xfile2.readAsBytes();
+              final b642 = base64Encode(bytes2);
+              final resp2 = await _sendIdentify(b642);
+              final analysis2 = resp2['analysis'];
+              if (!mounted || !useContext.mounted) return;
+              ScaffoldMessenger.of(
+                useContext,
+              ).showSnackBar(const SnackBar(content: Text('Analyse terminée')));
+              Navigator.of(useContext).push(
+                MaterialPageRoute(
+                  builder: (_) => EcranResultatAnalyse(analysis: analysis2),
+                ),
+              );
+            } catch (e) {
+              String msg2 = 'Échec du nouvel envoi';
+              if (e is ApiException && e.statusCode == 504) {
+                msg2 = 'Le serveur ne répond toujours pas';
+              }
+              ScaffoldMessenger.of(
+                useContext,
+              ).showSnackBar(SnackBar(content: Text(msg2)));
+            }
+          },
+        );
       }
     } catch (e) {
       // ignore camera errors
@@ -271,26 +417,207 @@ class _EcranScannerState extends State<EcranScanner>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _cameraController?.dispose();
+    _scanController.dispose();
     super.dispose();
   }
 
+  Future<void> _showErrorDialog(
+    BuildContext ctx, {
+    required String title,
+    required String message,
+    VoidCallback? onRetry,
+  }) async {
+    return showDialog<void>(
+      context: ctx,
+      builder: (dctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(dctx).pop();
+            },
+            child: const Text('Fermer'),
+          ),
+          if (onRetry != null)
+            TextButton(
+              onPressed: () {
+                Navigator.of(dctx).pop();
+                onRetry();
+              },
+              child: const Text('Réessayer'),
+            ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(dctx).pop();
+              ScaffoldMessenger.of(ctx).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Vérifiez que le backend est démarré et accessible sur le réseau.',
+                  ),
+                ),
+              );
+            },
+            child: const Text('Aide'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Récupère la position GPS actuelle de l'utilisateur (best-effort).
+  /// Renvoie null si l'utilisateur refuse la permission, si le GPS est
+  /// désactivé, ou si aucune position n'est disponible dans le délai imparti.
+  Future<Position?> _getCurrentPosition() async {
+    try {
+      // Vérifier que le service de localisation est activé
+      final enabled = await Geolocator.isLocationServiceEnabled();
+      if (!enabled) {
+        debugPrint('[geo] Service de localisation désactivé');
+        return null;
+      }
+
+      // Vérifier/demander la permission
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        debugPrint('[geo] Permission refusée: $permission');
+        return null;
+      }
+
+      // Récupérer la position, avec un timeout raisonnable.
+      // On utilise l'API classique (desiredAccuracy + timeLimit) qui est
+      // supportée par toutes les versions de geolocator.
+      final pos = await Geolocator.getCurrentPosition(
+        // ignore: deprecated_member_use
+        desiredAccuracy: LocationAccuracy.medium,
+        timeLimit: const Duration(seconds: 8),
+      );
+      debugPrint('[geo] Position ${pos.latitude}, ${pos.longitude}');
+      return pos;
+    } catch (e) {
+      debugPrint('[geo] Erreur lors de la récupération de la position: $e');
+      return null;
+    }
+  }
+
+  /// Résout des coordonnées en label humain (ex. "Quartier, Ville, Région").
+  /// Utilise le géocodeur natif via le package geocoding. Renvoie null si
+  /// la résolution échoue (hors-ligne, zone non couverte, erreur).
+  Future<String?> _reverseGeocode(double lat, double lon) async {
+    try {
+      // Force le français si possible
+      try {
+        await geocoding.setLocaleIdentifier('fr_FR');
+      } catch (_) {}
+      final placemarks = await geocoding
+          .placemarkFromCoordinates(lat, lon)
+          .timeout(const Duration(seconds: 6));
+      if (placemarks.isEmpty) return null;
+      final p = placemarks.first;
+      // Construit un label concis : quartier, ville, pays.
+      final parts = <String>[];
+      if ((p.subLocality ?? '').isNotEmpty) parts.add(p.subLocality!);
+      if ((p.locality ?? '').isNotEmpty) parts.add(p.locality!);
+      if ((p.administrativeArea ?? '').isNotEmpty &&
+          !parts.contains(p.administrativeArea)) {
+        parts.add(p.administrativeArea!);
+      }
+      if ((p.country ?? '').isNotEmpty && parts.length < 3) {
+        parts.add(p.country!);
+      }
+      if (parts.isEmpty) return null;
+      final label = parts.join(', ');
+      debugPrint('[geo] Label résolu: $label');
+      return label;
+    } catch (e) {
+      debugPrint('[geo] reverseGeocode erreur: $e');
+      return null;
+    }
+  }
+
   Future<Map<String, dynamic>> _sendIdentify(String b64) async {
+    // Met l'animation de scan en pause pendant capture + envoi.
+    _pauseScan();
+    try {
+      return await _sendIdentifyInner(b64);
+    } finally {
+      _resumeScan();
+    }
+  }
+
+  Future<Map<String, dynamic>> _sendIdentifyInner(String b64) async {
+    // Essaye de récupérer la position, mais avec un timeout GLOBAL très court
+    // pour ne JAMAIS retarder l'analyse : si pas de GPS en 3s, on part sans.
+    Position? pos;
+    String? label;
+    try {
+      pos = await _getCurrentPosition().timeout(
+        const Duration(seconds: 3),
+        onTimeout: () {
+          debugPrint('[geo] GPS global timeout (3s) — scan sans position');
+          return null;
+        },
+      );
+    } catch (e) {
+      debugPrint('[geo] GPS erreur (ignoré): $e');
+      pos = null;
+    }
+    if (pos != null) {
+      try {
+        label = await _reverseGeocode(pos.latitude, pos.longitude).timeout(
+          const Duration(seconds: 3),
+          onTimeout: () {
+            debugPrint('[geo] reverse-geocode timeout (3s)');
+            return null;
+          },
+        );
+      } catch (e) {
+        debugPrint('[geo] reverse-geocode erreur (ignoré): $e');
+        label = null;
+      }
+    }
+
+    final payload = <String, dynamic>{
+      'images': [b64],
+      // Utilise l'utilisateur connecté pour rattacher l'analyse au bon compte.
+      'user_id': ApiService.instance.currentUserId ?? 0,
+    };
+    if (pos != null) {
+      payload['latitude'] = pos.latitude;
+      payload['longitude'] = pos.longitude;
+    }
+    if (label != null && label.isNotEmpty) {
+      payload['location_label'] = label;
+    }
+    debugPrint(
+      '[scan] POST /identify_plantnet pos=${pos?.latitude},${pos?.longitude} label=$label',
+    );
+
     int attempts = 0;
     while (true) {
       attempts += 1;
       try {
-        // prefer a shorter timeout for UI responsiveness
-        final respFuture = ApiService.instance.postJson('/identify', {
-          'images': [b64],
-          'user_id': 1,
-        });
-        final resp = await respFuture.timeout(const Duration(seconds: 10));
+        debugPrint(
+          'Calling: ${ApiService.instance.baseUrl}/identify_plantnet (tentative $attempts)',
+        );
+        final respFuture = ApiService.instance.postJson(
+          '/identify_plantnet',
+          payload,
+        );
+        final resp = await respFuture.timeout(const Duration(seconds: 25));
+        debugPrint(
+          '[scan] Réponse OK — clés=${resp.keys.toList()} '
+          'analysis?=${resp['analysis'] != null}',
+        );
         return resp;
       } on TimeoutException {
-        // map to ApiException-like for upstream handling
         throw ApiException(504, 'Le serveur ne répond pas');
       } on ApiException catch (e) {
-        // retry once on 502
+        debugPrint('[scan] ApiException ${e.statusCode}: ${e.message}');
         if (e.statusCode == 502 && attempts == 1) {
           await Future.delayed(const Duration(seconds: 1));
           continue;
@@ -304,43 +631,9 @@ class _EcranScannerState extends State<EcranScanner>
   Widget build(BuildContext context) {
     const Color background = Color(0xFFfbfbe2);
     const Color primaryContainer = Color(0xFF2e7d32);
-    const Color surfaceContainerHigh = Color(0xFFefefd7);
-    const Color onSurfaceVariant = Color(0xFF40493d);
 
     return Scaffold(
       backgroundColor: background,
-      appBar: AppBar(
-        backgroundColor: background,
-        elevation: 0,
-        leading: const Padding(
-          padding: EdgeInsets.only(left: 12.0),
-          child: Icon(Icons.menu, color: Color(0xFF0d631b)),
-        ),
-        centerTitle: true,
-        title: Text(
-          'Vision',
-          style: GoogleFonts.manrope(
-            fontWeight: FontWeight.w800,
-            color: const Color(0xFF0d631b),
-            fontSize: 18,
-          ),
-        ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12.0),
-            child: _avatarUrl != null && _avatarUrl!.isNotEmpty
-                ? CircleAvatar(
-                    radius: 18,
-                    backgroundImage: NetworkImage(_avatarUrl!),
-                  )
-                : CircleAvatar(
-                    radius: 18,
-                    backgroundColor: surfaceContainerHigh,
-                    child: const Icon(Icons.person, color: Color(0xFF0d631b)),
-                  ),
-          ),
-        ],
-      ),
       body: Stack(
         children: [
           // Camera preview area (falls back to placeholder image)
@@ -353,7 +646,7 @@ class _EcranScannerState extends State<EcranScanner>
                         fit: BoxFit.cover,
                         image: NetworkImage(
                           _backgroundImageUrl ??
-                              'https://lh3.googleusercontent.com/aida-public/AB6AXuC3p39lg_poGz9-pFe1w8-85uRtNaz1lwXBBdOfL71sdI85ZNVT53CbY91tgstIKVoHL5tybrABZQCtIF6A35ZhiJNnAE37rwdaDAQn3yTHyF1xF7cPA17K3TjW5llFNAdQic-EJDnEIQVjCrqjH3yNvaQzWCxciaBaYZ9sI6oRgfl0fjlzkPr924ujAFIyUUQQTrSlwPQeCPcrUoCmOvnvtmXeO-i8htB3jeFwapehv_CHzHwA9ZChI0ntb1ngu36N6DBzPn_-cttY',
+                              'https://lh3.googleusercontent.com/aida-public/AB6AXuC3p39lg_poGz9-pFe1w8-85uRt Naz1lwXBBdOfL71sdI85ZNVT53CbY91tgstIKVoHL5tybrABZQCtIF6A35ZhiJNnAE37rwdaDAQn3yTHyF1xF7cPA17K3TjW5llFNAdQic-EJDnEIQVjCrqjH3yNvaQzWCxciaBaYZ9sI6oRgfl0fjlzkPr924ujAFIyUUQQTrSlwPQeCPcrUoCmOvnvtmXeO-i8htB3jeFwapehv_CHzHwA9ZChI0ntb1ngu36N6DBzPn_-cttY',
                         ),
                       ),
                     ),
@@ -365,55 +658,7 @@ class _EcranScannerState extends State<EcranScanner>
             child: Column(
               children: [
                 const SizedBox(height: 20),
-                // Hint card
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withAlpha(200),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: primaryContainer,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: const Icon(
-                            Icons.psychology,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _hintTitle,
-                                style: GoogleFonts.manrope(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _hintSubtitle,
-                                style: GoogleFonts.inter(
-                                  fontSize: 12,
-                                  color: onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+                // Hint card removed to avoid overlay on image
 
                 // Viewfinder area (flexible to avoid bottom overflow on small screens)
                 Flexible(
@@ -441,10 +686,26 @@ class _EcranScannerState extends State<EcranScanner>
                             right: 0,
                             child: _Corner(invert: true),
                           ),
-                          // Scanning line (green, subtle glow)
-                          Positioned.fill(
-                            child: Align(
-                              alignment: Alignment.center,
+                          // Scanning line (green, animated). Cachée dès qu'une
+                          // capture/analyse est en cours pour signaler que
+                          // l'image est en cours d'envoi.
+                          if (!_scanning)
+                            AnimatedBuilder(
+                              animation: _scanAnimation,
+                              builder: (context, child) {
+                                // SizedBox uses a fixed height of 280 here; match movement range
+                                const double boxHeight = 280.0;
+                                const double lineHeight = 3.0;
+                                final top =
+                                    _scanAnimation.value *
+                                    (boxHeight - lineHeight);
+                                return Positioned(
+                                  top: top,
+                                  left: 0,
+                                  right: 0,
+                                  child: child!,
+                                );
+                              },
                               child: Container(
                                 height: 3,
                                 width: double.infinity,
@@ -466,7 +727,6 @@ class _EcranScannerState extends State<EcranScanner>
                                 ),
                               ),
                             ),
-                          ),
                         ],
                       ),
                     ),
@@ -487,7 +747,7 @@ class _EcranScannerState extends State<EcranScanner>
                     ),
                     child: Center(
                       child: Text(
-                        'PLACER LE SPÉCIMEN AU CENTRE',
+                        I18n.tr('scanner.hint'),
                         style: GoogleFonts.inter(
                           color: Colors.white,
                           letterSpacing: 1.2,
@@ -524,7 +784,7 @@ class _EcranScannerState extends State<EcranScanner>
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Importer',
+                              I18n.tr('scanner.import'),
                               style: GoogleFonts.inter(
                                 color: Colors.white,
                                 fontSize: 12,
@@ -564,29 +824,34 @@ class _EcranScannerState extends State<EcranScanner>
                         ),
                       ),
 
-                      Column(
-                        children: [
-                          Container(
-                            width: 52,
-                            height: 52,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withAlpha(160),
-                              shape: BoxShape.circle,
+                      GestureDetector(
+                        onTap: _toggleFlash,
+                        child: Column(
+                          children: [
+                            Container(
+                              width: 52,
+                              height: 52,
+                              decoration: BoxDecoration(
+                                color: _flashOn
+                                    ? const Color(0xFFFFEB3B)
+                                    : Colors.white.withAlpha(160),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                _flashOn ? Icons.flash_on : Icons.flash_off,
+                                color: Colors.black,
+                              ),
                             ),
-                            child: const Icon(
-                              Icons.flash_on,
-                              color: Colors.black,
+                            const SizedBox(height: 8),
+                            Text(
+                              I18n.tr('scanner.flash'),
+                              style: GoogleFonts.inter(
+                                color: Colors.white,
+                                fontSize: 12,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Flash',
-                            style: GoogleFonts.inter(
-                              color: Colors.white,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -612,11 +877,11 @@ class _EcranScannerState extends State<EcranScanner>
                   MaterialPageRoute(builder: (_) => const EcranAccueil()),
                 );
               },
-              child: const _SmallNav(icon: Icons.home, label: 'Accueil'),
+              child: _SmallNav(icon: Icons.home, label: I18n.tr('nav.home')),
             ),
-            const _SmallNav(
+            _SmallNav(
               icon: Icons.center_focus_strong,
-              label: 'Analyser',
+              label: I18n.tr('nav.analyse'),
               active: true,
             ),
             GestureDetector(
@@ -626,7 +891,10 @@ class _EcranScannerState extends State<EcranScanner>
                   MaterialPageRoute(builder: (_) => const EcranHistorique()),
                 );
               },
-              child: const _SmallNav(icon: Icons.history, label: 'Historique'),
+              child: _SmallNav(
+                icon: Icons.history,
+                label: I18n.tr('nav.history'),
+              ),
             ),
             GestureDetector(
               onTap: () {
@@ -635,7 +903,10 @@ class _EcranScannerState extends State<EcranScanner>
                   MaterialPageRoute(builder: (_) => const EcranTableau()),
                 );
               },
-              child: const _SmallNav(icon: Icons.dashboard, label: 'Tableau'),
+              child: _SmallNav(
+                icon: Icons.dashboard,
+                label: I18n.tr('nav.dashboard'),
+              ),
             ),
           ],
         ),

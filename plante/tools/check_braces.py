@@ -32,9 +32,13 @@ for p in ROOT.rglob('*'):
             if cum != 0 or first_neg is not None:
                 issues.append((p.relative_to(ROOT), open_sym, close_sym, cum, first_neg))
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 if not issues:
-    print('OK - No imbalance found for inspected file types')
+    logger.info('OK - No imbalance found for inspected file types')
 else:
     for p, o, c, cum, first_neg in issues:
-        print(f'{p} -> {o}{c} imbalance: final_count={cum} first_negative_line={first_neg}')
+        logger.info('%s -> %s%s imbalance: final_count=%s first_negative_line=%s', p, o, c, cum, first_neg)
     raise SystemExit(2)

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'ecran_connexion.dart';
-import 'ecran_accueil.dart';
+import 'services/api_service.dart';
+import 'services/i18n.dart';
 
 class EcranInscription extends StatefulWidget {
   const EcranInscription({super.key});
@@ -15,6 +16,7 @@ class _EcranInscriptionState extends State<EcranInscription> {
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _emailCtrl = TextEditingController();
   final TextEditingController _passCtrl = TextEditingController();
+  bool _loading = false;
 
   @override
   void dispose() {
@@ -22,6 +24,51 @@ class _EcranInscriptionState extends State<EcranInscription> {
     _emailCtrl.dispose();
     _passCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    setState(() => _loading = true);
+    try {
+      await ApiService.instance.register(
+        email: _emailCtrl.text.trim(),
+        password: _passCtrl.text,
+        fullName: _nameCtrl.text.trim(),
+      );
+      if (!mounted) return;
+      // Succès : snack + redirection vers connexion
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Compte créé, connecte-toi pour continuer')),
+      );
+      await Future.delayed(const Duration(milliseconds: 400));
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const EcranConnexion()),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      String msg;
+      if (e.statusCode == 409) {
+        msg = 'Un compte existe déjà avec cet email';
+      } else if (e.statusCode == 400) {
+        msg = e.message;
+      } else {
+        msg = 'Erreur ${e.statusCode} — ${e.message}';
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.redAccent));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erreur de connexion — $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
@@ -70,7 +117,7 @@ class _EcranInscriptionState extends State<EcranInscription> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Text(
-                      'Créer un compte',
+                      I18n.tr('signup.title'),
                       style: GoogleFonts.manrope(
                         fontSize: 28,
                         fontWeight: FontWeight.w800,
@@ -79,7 +126,7 @@ class _EcranInscriptionState extends State<EcranInscription> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Rejoignez la communauté des botanistes digitaux.',
+                      I18n.tr('signup.subtitle'),
                       style: GoogleFonts.inter(
                         color: onSurfaceVariant,
                         fontSize: 14,
@@ -106,7 +153,7 @@ class _EcranInscriptionState extends State<EcranInscription> {
                         Align(
                           alignment: Alignment.centerLeft,
                           child: Text(
-                            'NOM COMPLET',
+                            I18n.tr('signup.fullName'),
                             style: GoogleFonts.inter(
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
@@ -141,7 +188,7 @@ class _EcranInscriptionState extends State<EcranInscription> {
                         Align(
                           alignment: Alignment.centerLeft,
                           child: Text(
-                            'EMAIL',
+                            I18n.tr('login.email'),
                             style: GoogleFonts.inter(
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
@@ -166,9 +213,15 @@ class _EcranInscriptionState extends State<EcranInscription> {
                               borderSide: BorderSide.none,
                             ),
                           ),
-                          validator: (v) => (v == null || v.isEmpty)
-                              ? 'Veuillez entrer un email'
-                              : null,
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) {
+                              return 'Veuillez entrer un email';
+                            }
+                            if (!v.contains('@') || !v.contains('.')) {
+                              return 'Email invalide';
+                            }
+                            return null;
+                          },
                         ),
 
                         const SizedBox(height: 12),
@@ -177,7 +230,7 @@ class _EcranInscriptionState extends State<EcranInscription> {
                         Align(
                           alignment: Alignment.centerLeft,
                           child: Text(
-                            'MOT DE PASSE',
+                            I18n.tr('login.password'),
                             style: GoogleFonts.inter(
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
@@ -202,9 +255,15 @@ class _EcranInscriptionState extends State<EcranInscription> {
                               borderSide: BorderSide.none,
                             ),
                           ),
-                          validator: (v) => (v == null || v.isEmpty)
-                              ? 'Veuillez entrer un mot de passe'
-                              : null,
+                          validator: (v) {
+                            if (v == null || v.isEmpty) {
+                              return 'Veuillez entrer un mot de passe';
+                            }
+                            if (v.length < 6) {
+                              return 'Le mot de passe doit contenir au moins 6 caractères';
+                            }
+                            return null;
+                          },
                         ),
 
                         const SizedBox(height: 18),
@@ -222,33 +281,34 @@ class _EcranInscriptionState extends State<EcranInscription> {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                             ),
-                            onPressed: () {
-                              if (_formKey.currentState?.validate() ?? false) {
-                                Navigator.of(context).pushReplacement(
-                                  MaterialPageRoute(
-                                    builder: (_) => const EcranAccueil(),
+                            onPressed: _loading ? null : _submit,
+                            child: _loading
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        I18n.tr('signup.submit'),
+                                        style: GoogleFonts.manrope(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      const Icon(
+                                        Icons.arrow_forward,
+                                        color: Colors.white,
+                                      ),
+                                    ],
                                   ),
-                                );
-                              }
-                            },
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  'Créer un compte',
-                                  style: GoogleFonts.manrope(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                const Icon(
-                                  Icons.arrow_forward,
-                                  color: Colors.white,
-                                ),
-                              ],
-                            ),
                           ),
                         ),
                       ],
@@ -264,7 +324,7 @@ class _EcranInscriptionState extends State<EcranInscription> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        'Déjà un compte ? ',
+                        I18n.tr('signup.haveAccount'),
                         style: GoogleFonts.inter(color: onSurfaceVariant),
                       ),
                       TextButton(
@@ -276,7 +336,7 @@ class _EcranInscriptionState extends State<EcranInscription> {
                           );
                         },
                         child: Text(
-                          'Se connecter',
+                          I18n.tr('login.submit'),
                           style: GoogleFonts.inter(
                             color: primary,
                             fontWeight: FontWeight.w700,

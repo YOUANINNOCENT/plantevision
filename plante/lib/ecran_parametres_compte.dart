@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'dart:async' show TimeoutException;
 import 'services/api_service.dart';
+import 'services/i18n.dart';
 import 'ecran_changer_mot_de_passe.dart';
 
 class EcranParametresCompte extends StatefulWidget {
@@ -32,9 +33,12 @@ class _EcranParametresCompteState extends State<EcranParametresCompte> {
     super.dispose();
   }
 
+  int get _uid => ApiService.instance.currentUserId ?? 1;
+
   Future<void> _loadUser() async {
     try {
-      final j = await ApiService.instance.getJson('/users/1');
+      final j = await ApiService.instance.getJson('/users/$_uid');
+      if (!mounted) return;
       setState(() {
         _user = Map<String, dynamic>.from(j);
         _nameCtrl.text = _user?['full_name']?.toString() ?? '';
@@ -58,25 +62,50 @@ class _EcranParametresCompteState extends State<EcranParametresCompte> {
     };
     try {
       setState(() => _loading = true);
-      await ApiService.instance
-          .putJson('/users/1', payload)
+      final resp = await ApiService.instance
+          .putJson('/users/$_uid', payload)
           .timeout(const Duration(seconds: 20));
+      // Met à jour le user courant avec la réponse serveur (email/name à jour)
+      try {
+        final u = resp['user'];
+        if (u is Map) {
+          ApiService.instance.currentUser = Map<String, dynamic>.from(u);
+        }
+      } catch (_) {}
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Profil mis à jour')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Profil mis à jour avec succès'),
+          backgroundColor: Color(0xFF0d631b),
+        ),
+      );
       await _loadUser();
     } on TimeoutException {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Délai d\'attente dépassé')),
+          const SnackBar(
+            content: Text('Délai d\'attente dépassé'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    } on ApiException catch (e) {
+      if (mounted) {
+        final msg = e.statusCode == 409
+            ? 'Cet email est déjà utilisé par un autre compte'
+            : e.message;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(msg), backgroundColor: Colors.redAccent),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Erreur sauvegarde: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur sauvegarde : $e'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
       }
     } finally {
       if (mounted) {
@@ -110,7 +139,8 @@ class _EcranParametresCompteState extends State<EcranParametresCompte> {
     }
     try {
       setState(() => _loading = true);
-      await ApiService.instance.delete('/users/1');
+      await ApiService.instance.delete('/users/$_uid');
+      ApiService.instance.logout();
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
@@ -161,7 +191,7 @@ class _EcranParametresCompteState extends State<EcranParametresCompte> {
           icon: const Icon(Icons.arrow_back, color: Color(0xFF0d631b)),
         ),
         title: Text(
-          'Paramètres du compte',
+          I18n.tr('settings.title'),
           style: GoogleFonts.manrope(
             fontWeight: FontWeight.w700,
             color: onSurface,
@@ -339,7 +369,7 @@ class _EcranParametresCompteState extends State<EcranParametresCompte> {
                               ),
                             ),
                             title: Text(
-                              'Changer le mot de passe',
+                              I18n.tr('settings.changePassword'),
                               style: GoogleFonts.inter(
                                 fontWeight: FontWeight.w700,
                               ),
@@ -367,100 +397,6 @@ class _EcranParametresCompteState extends State<EcranParametresCompte> {
                     ),
 
                     const SizedBox(height: 18),
-                    // Compte
-                    Text(
-                      'COMPTE',
-                      style: GoogleFonts.inter(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: primary,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: surfaceLowest,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: Color.fromRGBO(
-                            ((outlineVariant.r * 255.0).round())
-                                .clamp(0, 255)
-                                .toInt(),
-                            ((outlineVariant.g * 255.0).round())
-                                .clamp(0, 255)
-                                .toInt(),
-                            ((outlineVariant.b * 255.0).round())
-                                .clamp(0, 255)
-                                .toInt(),
-                            0.1,
-                          ),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Expanded(
-                            child: Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFe4f4df),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  child: const Icon(
-                                    Icons.local_florist,
-                                    color: Color(0xFF0d631b),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        _user?['subscription_name']
-                                                ?.toString() ??
-                                            'Vision',
-                                        style: GoogleFonts.manrope(
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        _user?['subscription_next']
-                                                ?.toString() ??
-                                            'Aucun abonnement',
-                                        style: GoogleFonts.inter(
-                                          color: onSurfaceVariant,
-                                          fontSize: 12,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: () {},
-                            child: Text(
-                              'Gérer',
-                              style: GoogleFonts.inter(
-                                color: primary,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
                     // Danger zone
                     Container(
                       padding: const EdgeInsets.only(top: 12),
@@ -476,7 +412,7 @@ class _EcranParametresCompteState extends State<EcranParametresCompte> {
                                 ),
                                 const SizedBox(width: 10),
                                 Text(
-                                  'Supprimer le compte',
+                                  I18n.tr('settings.deleteAccount'),
                                   style: GoogleFonts.inter(
                                     color: const Color(0xFFba1a1a),
                                     fontWeight: FontWeight.w700,
@@ -523,7 +459,7 @@ class _EcranParametresCompteState extends State<EcranParametresCompte> {
                             ),
                           ),
                           child: Text(
-                            'Enregistrer les modifications',
+                            I18n.tr('settings.saveChanges'),
                             style: GoogleFonts.manrope(
                               fontWeight: FontWeight.w700,
                             ),

@@ -1,17 +1,31 @@
 import 'package:flutter/material.dart';
 import 'ecran_splash.dart';
+import 'screens/plant_identify_screen.dart';
+import 'services/i18n.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Charge la langue sauvegardée avant de construire l'app pour éviter
+  // un flash de français au démarrage quand l'utilisateur a choisi autre chose.
+  await I18n.instance.load();
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
+    // Rebuild toute l'app (titres, boutons, menus) quand la langue change.
+    return ListenableBuilder(
+      listenable: I18n.instance,
+      builder: (_, _) => _buildApp(),
+    );
+  }
+
+  Widget _buildApp() {
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
       title: 'Flutter Demo',
       theme: ThemeData(
         useMaterial3: true,
@@ -31,6 +45,7 @@ class MyApp extends StatelessWidget {
         // This works for code too, not just values: Most code changes can be
         // tested with just a hot reload.
       ),
+      routes: {'/identify': (context) => const PlantIdentifyScreen()},
       home: const EcranSplash(),
     );
   }

@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'ecran_accueil.dart';
 import 'ecran_inscription.dart';
+import 'ecran_mot_de_passe_oublie.dart';
+import 'services/api_service.dart';
+import 'services/i18n.dart';
 
 class EcranConnexion extends StatefulWidget {
   const EcranConnexion({super.key});
@@ -14,12 +17,72 @@ class _EcranConnexionState extends State<EcranConnexion> {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _emailCtrl = TextEditingController();
   final TextEditingController _passCtrl = TextEditingController();
+  bool _loading = false;
+  String? _emailError;
+  String? _passwordError;
 
   @override
   void dispose() {
     _emailCtrl.dispose();
     _passCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _submit() async {
+    // Reset les erreurs spécifiques champ
+    setState(() {
+      _emailError = null;
+      _passwordError = null;
+    });
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    setState(() => _loading = true);
+    try {
+      final user = await ApiService.instance.login(
+        email: _emailCtrl.text.trim(),
+        password: _passCtrl.text,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Bienvenue ${user['email'] ?? ''}')),
+      );
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const EcranAccueil()),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      // 404 = email inconnu, 401 = mauvais mot de passe
+      if (e.statusCode == 404) {
+        setState(() => _emailError = 'Email incorrect');
+      } else if (e.statusCode == 401) {
+        setState(() => _passwordError = 'Mot de passe incorrect');
+      } else if (e.statusCode == 400) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erreur ${e.statusCode} — ${e.message}'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+      // Re-valide le formulaire pour afficher _emailError / _passwordError
+      _formKey.currentState?.validate();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Impossible de joindre le serveur — $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
@@ -62,7 +125,7 @@ class _EcranConnexionState extends State<EcranConnexion> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Carte visuelle
+                // Carte visuelle (image jungle locale)
                 Container(
                   height: 180,
                   margin: const EdgeInsets.only(bottom: 24),
@@ -71,20 +134,21 @@ class _EcranConnexionState extends State<EcranConnexion> {
                     borderRadius: BorderRadius.circular(16),
                     image: const DecorationImage(
                       fit: BoxFit.cover,
-                      image: NetworkImage(
-                        'https://lh3.googleusercontent.com/aida-public/AB6AXuAFfdjh5X2eUYJu6pauXurmPuFl_5xLaMsArLhIc4s1DSnIzHvR6KDG8XvH55uErl9acAOvRVLBKvMrpLUsCBchg9AASBxa-kdicnXybMnXO5dfM3SMyDgC6UB_kD32kx6J3mbYyPuIg5zHgAxP_JqHpH83_ntTvCNPz5gow-VmZCniW4uSct_uoXxzfqrDZhgNaLNCxieaCskCGUD47KpZOkiO0ZiheAydxMX1nwecVA12Lj4A8D5-h4CxIZVMnursOLdcWcPrTIew',
-                      ),
+                      image: AssetImage('assets/images/connexion_jungle.jpg'),
                     ),
                   ),
                   child: Stack(
                     children: [
+                      // Voile sombre dégradé : assombrit l'image pour que le
+                      // texte blanc reste lisible quel que soit le contenu de
+                      // la photo de fond.
                       Container(
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(16),
                           gradient: LinearGradient(
                             colors: [
-                              Colors.transparent,
-                              Colors.black.withAlpha(26),
+                              Colors.black.withAlpha(80),
+                              Colors.black.withAlpha(150),
                             ],
                             begin: Alignment.topCenter,
                             end: Alignment.bottomCenter,
@@ -96,20 +160,35 @@ class _EcranConnexionState extends State<EcranConnexion> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
-                              'Bienvenue',
+                              I18n.tr('login.welcome'),
                               style: GoogleFonts.manrope(
-                                fontSize: 32,
+                                fontSize: 36,
                                 fontWeight: FontWeight.w800,
-                                color: onSurface,
+                                color: Colors.white,
+                                shadows: [
+                                  Shadow(
+                                    color: Colors.black.withAlpha(180),
+                                    blurRadius: 12,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
                               ),
                             ),
-                            const SizedBox(height: 6),
+                            const SizedBox(height: 8),
                             Text(
-                              'Le Botaniste Digital',
+                              I18n.tr('login.brandSubtitle'),
                               style: GoogleFonts.inter(
                                 letterSpacing: 4,
-                                fontSize: 12,
-                                color: onSurfaceVariant,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white.withAlpha(230),
+                                shadows: [
+                                  Shadow(
+                                    color: Colors.black.withAlpha(160),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 1),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
@@ -124,7 +203,7 @@ class _EcranConnexionState extends State<EcranConnexion> {
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Text(
-                      'Connectez-vous à votre guide',
+                      I18n.tr('login.title'),
                       style: GoogleFonts.manrope(
                         fontSize: 20,
                         fontWeight: FontWeight.w700,
@@ -133,7 +212,7 @@ class _EcranConnexionState extends State<EcranConnexion> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Explorez le monde végétal avec précision.',
+                      I18n.tr('login.subtitle'),
                       style: GoogleFonts.inter(
                         color: onSurfaceVariant,
                         fontSize: 14,
@@ -153,7 +232,7 @@ class _EcranConnexionState extends State<EcranConnexion> {
                       Align(
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          'EMAIL',
+                          I18n.tr('login.email'),
                           style: GoogleFonts.inter(
                             fontSize: 12,
                             fontWeight: FontWeight.w700,
@@ -179,9 +258,20 @@ class _EcranConnexionState extends State<EcranConnexion> {
                           ),
                         ),
                         style: GoogleFonts.inter(color: onSurface),
-                        validator: (v) => (v == null || v.isEmpty)
-                            ? 'Veuillez entrer un email'
-                            : null,
+                        onChanged: (_) {
+                          if (_emailError != null) {
+                            setState(() => _emailError = null);
+                          }
+                        },
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) {
+                            return 'Veuillez entrer un email';
+                          }
+                          if (!v.contains('@') || !v.contains('.')) {
+                            return 'Email invalide';
+                          }
+                          return _emailError;
+                        },
                       ),
 
                       const SizedBox(height: 16),
@@ -191,7 +281,7 @@ class _EcranConnexionState extends State<EcranConnexion> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            'MOT DE PASSE',
+                            I18n.tr('login.password'),
                             style: GoogleFonts.inter(
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
@@ -199,7 +289,14 @@ class _EcranConnexionState extends State<EcranConnexion> {
                             ),
                           ),
                           TextButton(
-                            onPressed: () {},
+                            onPressed: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      const EcranMotDePasseOublie(),
+                                ),
+                              );
+                            },
                             child: Text(
                               'Oublié ?',
                               style: GoogleFonts.inter(color: primary),
@@ -224,9 +321,17 @@ class _EcranConnexionState extends State<EcranConnexion> {
                           ),
                         ),
                         style: GoogleFonts.inter(color: onSurface),
-                        validator: (v) => (v == null || v.isEmpty)
-                            ? 'Veuillez entrer un mot de passe'
-                            : null,
+                        onChanged: (_) {
+                          if (_passwordError != null) {
+                            setState(() => _passwordError = null);
+                          }
+                        },
+                        validator: (v) {
+                          if (v == null || v.isEmpty) {
+                            return 'Veuillez entrer un mot de passe';
+                          }
+                          return _passwordError;
+                        },
                       ),
 
                       const SizedBox(height: 24),
@@ -248,29 +353,32 @@ class _EcranConnexionState extends State<EcranConnexion> {
                           ],
                         ),
                         child: InkWell(
-                          onTap: () {
-                            Navigator.of(context).pushReplacement(
-                              MaterialPageRoute(
-                                builder: (_) => const EcranAccueil(),
-                              ),
-                            );
-                          },
+                          onTap: _loading ? null : _submit,
                           borderRadius: BorderRadius.circular(16),
                           child: Center(
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  'Se connecter',
-                                  style: GoogleFonts.manrope(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
+                            child: _loading
+                                ? const SizedBox(
+                                    width: 22,
+                                    height: 22,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        I18n.tr('login.submit'),
+                                        style: GoogleFonts.manrope(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Icon(Icons.arrow_forward, color: Colors.white),
+                                    ],
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                Icon(Icons.arrow_forward, color: Colors.white),
-                              ],
-                            ),
                           ),
                         ),
                       ),
@@ -282,7 +390,7 @@ class _EcranConnexionState extends State<EcranConnexion> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(
-                            'Nouveau sur Vision ? ',
+                            I18n.tr('login.newUser'),
                             style: GoogleFonts.inter(color: onSurfaceVariant),
                           ),
                           TextButton(
@@ -294,7 +402,7 @@ class _EcranConnexionState extends State<EcranConnexion> {
                               );
                             },
                             child: Text(
-                              'Créer un compte',
+                              I18n.tr('login.createAccount'),
                               style: GoogleFonts.inter(
                                 color: primary,
                                 fontWeight: FontWeight.w700,
