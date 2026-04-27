@@ -1,7 +1,30 @@
-// Configuration simple pour l'URL du backend.
-// Laisser `backendBaseUrl` vide pour utiliser la détection automatique
-// (emulateur Android -> 10.0.2.2, iOS -> localhost, appareil réel -> IP locale).
-const String backendBaseUrl = ''; // Ex: 'http://10.0.2.2:8000' ou '' pour auto
+// Configuration de l'URL du backend.
+//
+// Priorité (du plus haut au plus bas) :
+//   1. Variable de build `--dart-define=BACKEND_URL=https://...`
+//      Utilisée pour le build web Netlify (production) ET pour les builds
+//      flutter run en local quand on veut pointer sur Render.
+//   2. Constante `_kFallbackBackendUrl` ci-dessous (pratique pour le LAN
+//      pendant le développement Flutter mobile sur ton WiFi).
+//   3. Auto-detection (api_service.dart) : 10.0.2.2 sur emulateur Android,
+//      127.0.0.1 sinon.
+//
+// Exemples :
+//   flutter run --dart-define=BACKEND_URL=https://plante-backend-xxxx.onrender.com
+//   flutter build web --release --dart-define=BACKEND_URL=https://plante-backend-xxxx.onrender.com
 
-// Optionnel: adresse LAN de la machine si vous testez sur appareil réel.
-const String backendLocalIp = '192.168.1.42';
+const String _kBackendUrlFromEnv = String.fromEnvironment('BACKEND_URL');
+
+/// URL de fallback utilisée quand --dart-define=BACKEND_URL n'est pas fourni.
+/// Laisse vide ('') pour activer l'auto-détection LAN.
+/// Mets ton IP locale type 'http://192.168.0.106:8000' pour tester sur ton
+/// téléphone connecté au même WiFi que ton PC.
+const String _kFallbackBackendUrl = '';
+
+/// URL effective du backend, exposée au reste de l'app.
+const String backendBaseUrl = _kBackendUrlFromEnv.isNotEmpty
+    ? _kBackendUrlFromEnv
+    : _kFallbackBackendUrl;
+
+/// Adresse LAN brute (encore utilisée à un endroit ou deux historiquement).
+const String backendLocalIp = '192.168.0.106';

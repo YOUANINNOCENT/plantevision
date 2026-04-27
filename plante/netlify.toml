@@ -1,0 +1,32 @@
+# Configuration Netlify pour Flutter Web.
+# Ce fichier doit etre soit a la racine du repo, soit dans plante/ avec base="plante".
+#
+# Netlify n'a pas de runtime Flutter natif, donc on installe le SDK pendant le build.
+
+[build]
+  # Le code Flutter vit dans plante/, donc Netlify s'execute dedans.
+  base = "plante"
+  # Telecharge Flutter, build web release, met le resultat dans plante/build/web.
+  command = "bash netlify-build.sh"
+  publish = "build/web"
+
+[build.environment]
+  # Version de Flutter a installer (ajuste si besoin).
+  FLUTTER_VERSION = "3.24.5"
+  # Necessaire pour les CDNs Flutter
+  FLUTTER_CHANNEL = "stable"
+
+# Redirection SPA : toutes les URLs renvoient sur index.html
+# (sinon un refresh sur /historique donne une 404).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Headers de securite recommandes pour une PWA Flutter.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
