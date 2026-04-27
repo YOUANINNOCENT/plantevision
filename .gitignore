@@ -1,0 +1,50 @@
+# Python / venv
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets — JAMAIS commit
+.env
+**/.env
+plante/backend/.env
+
+# Bases SQLite locales
+*.db
+plante/backend/*.db
+
+# Build artifacts Flutter
+plante/build/
+plante/.dart_tool/
+plante/.flutter-plugins
+plante/.flutter-plugins-dependencies
+
+# iOS/macOS Pods
+plante/ios/Pods/
+plante/macos/Pods/
+
+# Editeurs / IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+~$*
+
+# Node (si jamais)
+node_modules/
+
+# Fichiers de dev/debug du backend — ne pas committer (peuvent contenir des cles API)
+plante/backend/tmp_*.py
+plante/backend/check_*.py
+plante/backend/quick_*.py
+plante/backend/test_*.py
+plante/backend/retry_gen.py
+plante/backend/run_diag.py
+plante/backend/uploads/
+plante/backend/data/
+plante/backend/sortie.png
+plante/backend/.ruff_cache/
+plante/backend/last_plantnet_response.json

@@ -1,0 +1,60 @@
+# Blueprint Render — déploie le backend FastAPI + une base PostgreSQL gratuite.
+# Voir https://render.com/docs/blueprint-spec pour la doc complète.
+
+services:
+  - type: web
+    name: plante-backend
+    runtime: python
+    plan: free
+    region: frankfurt   # le plus proche de l'Europe / Côte d'Ivoire
+    branch: main        # ajuste si ta branche principale s'appelle autrement
+    rootDir: plante/backend    # FastAPI vit dans /plante/backend dans le repo
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # Variables techniques injectées automatiquement par Render
+      - key: DATABASE_URL
+        fromDatabase:
+          name: plante-db
+          property: connectionString
+      # Secrets à définir manuellement dans le dashboard Render après création
+      # (onglet Environment du service web). Les laisser vides ici les rend
+      # facultatifs — tu pourras les ajouter via l'UI sans rebuild.
+      - key: PLANTNET_API_KEY
+        sync: false
+      - key: PLANTNET_API_URL
+        value: https://my-api.plantnet.org/v2/identify/all
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_IMAGE_MODEL
+        value: ""
+      - key: MODELSLAB_API_KEY
+        sync: false
+      - key: MODELSLAB_API_URL
+        value: https://modelslab.com/api/v6/realtime/text2img
+      - key: MODELSLAB_DEFAULT_SIZE
+        value: 768x768
+      - key: MODELSLAB_DEFAULT_STYLE
+        value: botanical_realistic
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: SMTP_FROM_NAME
+        value: "Vision — Botaniste Digital"
+
+databases:
+  - name: plante-db
+    plan: free
+    region: frankfurt
+    databaseName: plante_db
+    user: plante_user
