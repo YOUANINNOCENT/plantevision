@@ -1,0 +1,9 @@
+plante/backend/uploads/
+plante/backend/plante_dev.db
+**/.venv/
+**/.venv
+**/__pycache__/
+**/*.pyc
+*.db
+.env
+.env.*

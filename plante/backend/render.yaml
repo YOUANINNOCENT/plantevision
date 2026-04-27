@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: plante-backend
+    env: docker
+    repo: https://github.com/YOUANINNOCENT/plantevision.git
+    branch: main
+    root: plante/backend
+    plan: free
+    autoDeploy: true
+    # For Docker-based service Render will build the Dockerfile located in the root above.
