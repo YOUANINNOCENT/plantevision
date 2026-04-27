@@ -22,9 +22,11 @@ const String _kBackendUrlFromEnv = String.fromEnvironment('BACKEND_URL');
 const String _kFallbackBackendUrl = '';
 
 /// URL effective du backend, exposée au reste de l'app.
-const String backendBaseUrl = _kBackendUrlFromEnv.isNotEmpty
-    ? _kBackendUrlFromEnv
-    : _kFallbackBackendUrl;
+/// Note : on compare a '' au lieu de .isNotEmpty parce que `String.isNotEmpty`
+/// n'est pas evaluable dans une expression `const` en Dart.
+const String backendBaseUrl = _kBackendUrlFromEnv == ''
+    ? _kFallbackBackendUrl
+    : _kBackendUrlFromEnv;
 
 /// Adresse LAN brute (encore utilisée à un endroit ou deux historiquement).
 const String backendLocalIp = '192.168.0.106';
