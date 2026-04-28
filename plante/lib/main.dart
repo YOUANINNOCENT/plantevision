@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'config.dart';
 import 'ecran_splash.dart';
 import 'screens/plant_identify_screen.dart';
+import 'services/api_service.dart';
 import 'services/i18n.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Applique l'URL du backend définie dans config.dart
+  ApiService.instance.configure(overrideBaseUrl: backendBaseUrl);
   // Charge la langue sauvegardée avant de construire l'app pour éviter
   // un flash de français au démarrage quand l'utilisateur a choisi autre chose.
   await I18n.instance.load();

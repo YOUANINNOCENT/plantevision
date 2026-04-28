@@ -1,5 +1,5 @@
 import tkinter as tk
-import cv2
+import cv2  # type: ignore[import-untyped]
 import PIL.Image
 import PIL.ImageTk
 import os
@@ -10,7 +10,7 @@ import io
 import json
 
 # Backend configuration: URL du service FastAPI
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000")
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://192.168.0.102:8000")
 
 
 def pil_to_base64(pil_img: PIL.Image.Image) -> str:
@@ -32,6 +32,7 @@ class AppPlantVision:
             raise RuntimeError("Impossible d'ouvrir la webcam.")
 
         self.analyse_en_cours = False
+        self._imgtk: PIL.ImageTk.PhotoImage | None = None
 
         # --- Interface ---
         self.label_video = tk.Label(window, bg="black")
@@ -77,9 +78,8 @@ class AppPlantVision:
         if ret:
             cv2image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img = PIL.Image.fromarray(cv2image)
-            imgtk = PIL.ImageTk.PhotoImage(image=img)
-            self.label_video.imgtk = imgtk
-            self.label_video.configure(image=imgtk)
+            self._imgtk = PIL.ImageTk.PhotoImage(image=img)
+            self.label_video.configure(image=self._imgtk)
         self.window.after(10, self.update_frame)
 
     def analyser_ia(self):
