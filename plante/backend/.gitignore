@@ -1,0 +1,8 @@
+# Ignore local secrets and runtime artifacts
+.env
+.venv/
+uploads/
+*.db
+__pycache__/
+*.pyc
+.ruff_cache/
