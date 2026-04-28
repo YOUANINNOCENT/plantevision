@@ -1,6 +1,6 @@
 ﻿import requests, json
 import os
-base='http://127.0.0.1:8000'
+base='http://192.168.0.102:8000'
 print('GET /admin/ai_mode')
 try:
     r = requests.get(base + '/admin/ai_mode', timeout=10)

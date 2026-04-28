@@ -30,7 +30,7 @@ try:
     from dotenv import load_dotenv
     _env_path = backend_dir / ".env"
     if _env_path.exists():
-        load_dotenv(dotenv_path=_env_path, override=False)
+        load_dotenv(dotenv_path=_env_path, override=True)
         print(f"[startup] .env chargé depuis {_env_path}")
 except Exception as _env_err:
     print(f"[startup] python-dotenv non disponible ({_env_err}) — .env non chargé")
@@ -1080,6 +1080,61 @@ async def ask_post(request: Request, payload: AskRequest = Body(...)):
         raise HTTPException(status_code=502, detail=str(e))
 
     return JSONResponse({"status": "ok", "answer": answer_text, "tokens_used": tokens_used, "conversation_id": conv_id})
+
+
+# =========================
+# 🌿 PLANT INFO
+# =========================
+class PlantInfoRequest(BaseModel):
+    name: str
+
+
+@app.post("/plant_info")
+async def plant_info(payload: PlantInfoRequest = Body(...)):
+    name = (payload.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name est requis")
+
+    prompt = f"""Tu es un expert botaniste. Donne des informations détaillées sur la plante : "{name}".
+
+Réponds UNIQUEMENT avec un objet JSON valide, sans texte avant ou après, avec exactement ces champs :
+{{
+  "noms_communs": ["nom1", "nom2"],
+  "famille": "nom de la famille botanique",
+  "sante_plante": "description générale de la plante, son aspect, son habitat naturel (2-3 phrases)",
+  "toxicite": "aucune | faible | moyenne | élevée",
+  "toxicite_details": "détails sur la toxicité, parties toxiques, symptômes si ingérée (1-2 phrases)",
+  "est_comestible": "oui | non | partiellement",
+  "est_medicinale": "oui | non",
+  "usages_traditionnels": ["usage1", "usage2", "usage3"],
+  "medicinale_details": "description des propriétés médicinales et modes de préparation (2-3 phrases)"
+}}"""
+
+    try:
+        from groq import Groq
+        api_key = os.getenv("GROQ_API_KEY", "").strip()
+        if not api_key:
+            raise HTTPException(status_code=503, detail="GROQ_API_KEY non configurée")
+        client = Groq(api_key=api_key)
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=1024,
+        )
+        raw = completion.choices[0].message.content or ""
+        # Extraire le JSON de la réponse
+        import re
+        match = re.search(r'\{[\s\S]*\}', raw)
+        if not match:
+            raise ValueError(f"Pas de JSON dans la réponse: {raw[:200]}")
+        data = json.loads(match.group())
+        return JSONResponse(data)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=502, detail=f"Réponse IA non parseable: {e}")
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 class ImageRequest(BaseModel):

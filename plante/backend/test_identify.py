@@ -12,7 +12,7 @@ def main():
 
     b64 = base64.b64encode(img).decode()
     try:
-        r = requests.post('http://127.0.0.1:8000/identify', json={'images':[b64], 'user_id': 1}, timeout=60)
+        r = requests.post('http://192.168.0.102:8000/identify', json={'images':[b64], 'user_id': 1}, timeout=60)
         print('status', r.status_code)
         try:
             print(json.dumps(r.json(), indent=2))

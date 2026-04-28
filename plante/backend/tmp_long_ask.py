@@ -1,5 +1,5 @@
 ﻿import requests, json
-base='http://127.0.0.1:8000'
+base='http://192.168.0.102:8000'
 long_prompt = '''Bonjour, je voudrais une réponse détaillée et technique en français sur la plante Mentha × piperita (menthe poivrée).
 
 Donnez :

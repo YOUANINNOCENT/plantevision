@@ -1,46 +1,42 @@
-import json
-import time
+import os
 from typing import Tuple
+
+_SYSTEM_PROMPT = (
+    "Tu es un assistant botanique spécialisé. Tu réponds UNIQUEMENT aux questions portant sur "
+    "les plantes, la nature, la végétation, les herbes, les fleurs, les arbres, les champignons, "
+    "l'horticulture, la botanique, les propriétés médicinales ou culinaires des végétaux, "
+    "et les écosystèmes naturels.\n\n"
+    "Si la question ne concerne pas ces sujets, réponds poliment : "
+    "\"Je suis uniquement spécialisé dans les plantes et la nature. "
+    "Je ne peux pas répondre à cette question.\"\n\n"
+    "Réponds toujours en français, de façon claire et concise."
+)
 
 
 def get_ai_answer(message: str, system_prompt: str | None = None) -> Tuple[str, int]:
-    """Réponse IA locale de secours.
+    """Appelle l'API Groq pour générer une réponse botanique."""
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
 
-    Après suppression du support OpenAI/Gemini, cette fonction fournit
-    uniquement des réponses locales simples utiles pour le développement
-    hors-ligne. Elle ne dépend plus d'aucune clé externe.
-    """
-    m = (message or "").strip().lower()
-    # salutations
-    if any(w in m for w in ["bonjour", "salut", "coucou", "hello"]):
-        return ("Bonjour ! Je suis votre assistant botanique hors-ligne — comment puis-je vous aider ?", 0)
-    if "comment tu vas" in m or "ça va" in m or "ca va" in m:
-        return ("Je vais bien, merci — prêt à vous aider avec des informations sur les plantes.", 0)
-    # identifier une plante
-    if any(w in m for w in ["identifier", "quelle plante", "c'est quelle plante", "quelle est cette plante"]):
+    if not api_key:
         return (
-            "Pour identifier une plante, envoyez une photo nette de la feuille et de la fleur si possible. "
-            "Donnez aussi le lieu et la saison. Je proposerai des suggestions probables.",
-            0,
-        )
-    # préparations (infusion / décoction)
-    if any(w in m for w in ["décoction", "decoction", "infusion", "préparer", "préparation"]):
-        return (
-            "Infusion: verser eau chaude sur les parties tendres (feuilles, fleurs) et laisser 5–10 min. "
-            "Décoction: faire bouillir les parties dures (racines, écorces) 10–30 min selon la matière.",
-            0,
-        )
-    # sécurité / comestible
-    if any(w in m for w in ["comestible", "manger", "toxique", "poison"]):
-        return (
-            "N'allez pas consommer une plante sans certitude. Recherchez des sources fiables ou demandez l'avis d'un expert. "
-            "La même espèce peut comporter des variétés toxiques.",
+            "Service IA non configuré. Veuillez contacter l'administrateur.",
             0,
         )
 
-    # question générique: fournir piste utile
-    return (
-        "Je n'ai pas accès à une API distante ici. Je peux aider pour l'identification, les préparations (infusion/décoction) "
-        "et les précautions. Posez une question précise.",
-        0,
-    )
+    try:
+        from groq import Groq
+        client = Groq(api_key=api_key)
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt or _SYSTEM_PROMPT},
+                {"role": "user", "content": message},
+            ],
+            temperature=0.7,
+            max_tokens=1024,
+        )
+        text = completion.choices[0].message.content or ""
+        tokens = completion.usage.total_tokens if completion.usage else 0
+        return (text, tokens)
+    except Exception as e:
+        return (f"Erreur IA : {e}", 0)

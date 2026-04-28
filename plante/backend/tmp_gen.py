@@ -1,5 +1,5 @@
 ﻿import requests, base64, json
-r = requests.post("http://127.0.0.1:8000/generate_image", json={"prompt":"Une feuille de menthe sur fond blanc, photographie réaliste","size":"512x512"}, timeout=120)
+r = requests.post("http://192.168.0.102:8000/generate_image", json={"prompt":"Une feuille de menthe sur fond blanc, photographie réaliste","size":"512x512"}, timeout=120)
 print("STATUS", r.status_code)
 print(r.text[:2000])
 try:

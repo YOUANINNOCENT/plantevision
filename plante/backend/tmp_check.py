@@ -1,6 +1,6 @@
 ﻿import requests
 try:
-    r = requests.get('http://127.0.0.1:8000/admin/ai_mode', timeout=10)
+    r = requests.get('http://192.168.0.102:8000/admin/ai_mode', timeout=10)
     print('GET /admin/ai_mode', r.status_code)
     try:
         print(r.json())

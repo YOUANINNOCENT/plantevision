@@ -14,7 +14,7 @@ with open(img, 'rb') as f:
 
 b64 = base64.b64encode(b).decode('ascii')
 
-url = os.getenv('BACKEND_URL', 'http://127.0.0.1:8000')
+url = os.getenv('BACKEND_URL', 'http://192.168.0.102:8000')
 endpoint = f"{url}/identify"
 print('Posting to', endpoint)
 

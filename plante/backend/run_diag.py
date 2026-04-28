@@ -2,7 +2,7 @@
 import logging
 
 logger = logging.getLogger(__name__)
-base='http://127.0.0.1:8000'
+base='http://192.168.0.102:8000'
 # ensure the Gemini key is stored (it already is, but repost to be safe)
 import os
 # key (read from env when needed)

@@ -1,5 +1,5 @@
 ﻿import requests
-base='http://127.0.0.1:8000'
+base='http://192.168.0.102:8000'
 import os
 key = os.getenv('OPENAI_API_KEY','').strip()
 try:

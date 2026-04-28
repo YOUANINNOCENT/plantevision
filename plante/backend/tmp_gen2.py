@@ -1,5 +1,5 @@
 ﻿import requests, base64, json
-base='http://127.0.0.1:8000'
+base='http://192.168.0.102:8000'
 # store key
 import os
 k = os.getenv('OPENAI_API_KEY','').strip()
